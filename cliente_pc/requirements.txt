@@ -1,0 +1,8 @@
+faster-whisper
+kokoro-onnx
+sounddevice
+soundfile
+scipy
+numpy
+requests
+keyboard

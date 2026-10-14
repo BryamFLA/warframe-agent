@@ -1,0 +1,14 @@
+{
+  "api_url": "http://192.168.3.38:8765",
+  "api_key": "COLE-AQUI-A-CHAVE (arquivo cache/api_key.txt no Mac)",
+  "tecla_falar": "f9",
+  "tecla_janela": "f10",
+  "whisper_modelo": "small",
+  "whisper_device": "cpu",
+  "voz": "pm_alex",
+  "velocidade_voz": 1.1,
+  "modo": "voz",
+  "janela_segundos": 25,
+  "janela_alpha": 0.88,
+  "sessao": "pc-jogo"
+}

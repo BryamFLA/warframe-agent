@@ -22,16 +22,23 @@ PERGUNTAS = [
     "qual frame é bom pra tankar no começo?",
     "Quem é o Ballas?",
 ]
-ap = argparse.ArgumentParser(); ap.add_argument("--modelo"); ap.add_argument("--saida"); ap.add_argument("--n", type=int, default=len(PERGUNTAS))
+ap = argparse.ArgumentParser(); ap.add_argument("--modelo"); ap.add_argument("--saida"); ap.add_argument("--n", type=int, default=len(PERGUNTAS)); ap.add_argument("--modo", default="texto")
 a = ap.parse_args()
 ag = Agent(answer_model=a.modelo)
-out = a.saida or f"eval/respostas_{ag.answer_model.replace(':', '_')}.md"
+out = a.saida or f"eval/respostas_{ag.answer_model.replace(':', '_')}_{a.modo}.md"
+primeiras = []
 L = [f"# Respostas — {ag.answer_model} (embedding {ag.ix.embed_model})\n"]; tempos = []
 for q in PERGUNTAS[:a.n]:
-    t = time.time(); r = ag.ask(q); dt = time.time() - t; tempos.append(dt)
-    L += [f"## {q}", "", f"*rota: {r['rota']['intencao']} ({r['rota'].get('via')}) · entidades: {', '.join(r['entidades']) or '—'} · {dt:.1f}s*", "",
+    t = time.time(); marks = {}; buf = []
+    def tok(x):
+        marks.setdefault("primeiro", time.time() - t); buf.append(x)
+        if "frase" not in marks and any(ch in "".join(buf) for ch in ".!?") and len("".join(buf)) > 25:
+            marks["frase"] = time.time() - t
+    r = ag.ask(q, modo=a.modo, on_token=tok); dt = time.time() - t; tempos.append(dt)
+    primeiras.append(marks.get("frase", dt))
+    L += [f"## {q}", "", f"*rota: {r['rota']['intencao']} · entidades: {', '.join(r['entidades']) or '—'} · total {dt:.1f}s · 1ª frase {marks.get('frase', dt):.1f}s · tokens {r['tempo'].get('tokens_entrada')}→{r['tempo'].get('tokens_saida')}*", "",
           r["resposta"], "", "Fontes: " + "; ".join(f"[{f['n']}] {f['nota']} — {f['secao'][:40]}" for f in r["fontes"]), ""]
-    print(f"{dt:5.1f}s  {q}", flush=True)
+    print(f"{dt:5.1f}s (1ª frase {marks.get('frase', dt):4.1f}s)  {q}", flush=True)
     open(out, "w", encoding="utf-8").write("\n".join(L))
-L.append(f"\n**Tempo médio: {sum(tempos)/len(tempos):.1f}s · máx {max(tempos):.1f}s**")
+L.append(f"\n**Tempo médio: {sum(tempos)/len(tempos):.1f}s · máx {max(tempos):.1f}s · 1ª frase média {sum(primeiras)/len(primeiras):.1f}s**")
 open(out, "w", encoding="utf-8").write("\n".join(L)); print("salvo em", out)

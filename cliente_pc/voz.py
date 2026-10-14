@@ -1,0 +1,238 @@
+#!/usr/bin/env python3
+"""Assistente de voz do Warframe para o PC de jogo (Windows).
+Segure a tecla (padrão F9), fale, solte -> transcreve (faster-whisper, CPU) -> pergunta ao agente no Mac
+-> fala a resposta frase a frase (Kokoro, voz pm_alex, CPU) e mostra o texto numa janela por cima do jogo.
+F10 mostra/esconde a janela.   Uso: python voz.py   |   python voz.py --teste   (autoteste sem microfone)"""
+import os, sys, json, time, queue, threading, re, argparse
+import numpy as np
+
+AQUI = os.path.dirname(os.path.abspath(__file__))
+CFG = {"api_url": "http://192.168.0.10:8765", "api_key": "", "tecla_falar": "f9", "tecla_janela": "f10",
+       "whisper_modelo": "small", "whisper_device": "cpu", "voz": "pm_alex", "velocidade_voz": 1.1,
+       "modo": "voz", "janela_segundos": 25, "janela_alpha": 0.88, "sessao": "pc-jogo"}
+if os.path.exists(os.path.join(AQUI, "config.json")):
+    CFG.update(json.load(open(os.path.join(AQUI, "config.json"), encoding="utf-8")))
+SR_MIC = 16000
+
+# ---------------------------------------------------------------- ouvir (STT)
+class Ouvido:
+    def __init__(self):
+        from faster_whisper import WhisperModel
+        ct = "int8" if CFG["whisper_device"] == "cpu" else "float16"
+        self.m = WhisperModel(CFG["whisper_modelo"], device=CFG["whisper_device"], compute_type=ct)
+        self.prompt = ("Warframe, Tenno, Excalibur, Rhino, Orokin Cell, Argon Crystal, Cryotic, Cetus, Fortuna, Deimos, "
+                       "Steel Path, Helminth, Riven, Arcane, Forma, Prime, Relíquia, Void, Lotus, Ordis, Kuva Lich, build")
+    def carregar_vocabulario(self):
+        try:
+            import requests
+            r = requests.get(CFG["api_url"].rstrip("/") + "/vocabulario", headers={"X-API-Key": CFG["api_key"]}, timeout=10)
+            self.prompt = r.json()["vocabulario"][:900]
+        except Exception as e:
+            print("[stt] usando vocabulário padrão:", e)
+    def transcrever(self, audio):
+        segs, _ = self.m.transcribe(audio, language="pt", beam_size=1, vad_filter=True,
+                                    initial_prompt=self.prompt, condition_on_previous_text=False)
+        return " ".join(s.text.strip() for s in segs).strip()
+
+class Microfone:
+    def __init__(self):
+        import sounddevice as sd
+        self.sd, self.buf, self.stream = sd, [], None
+    def iniciar(self):
+        self.buf = []
+        self.stream = self.sd.InputStream(samplerate=SR_MIC, channels=1, dtype="float32",
+                                          callback=lambda d, f, t, s: self.buf.append(d.copy()))
+        self.stream.start()
+    def parar(self):
+        if self.stream:
+            self.stream.stop(); self.stream.close(); self.stream = None
+        return np.concatenate(self.buf)[:, 0] if self.buf else np.zeros(0, dtype=np.float32)
+
+# ---------------------------------------------------------------- falar (TTS)
+class Voz:
+    def __init__(self):
+        from kokoro_onnx import Kokoro
+        mdir = os.path.join(AQUI, "modelos")
+        self.k = Kokoro(os.path.join(mdir, "kokoro-v1.0.int8.onnx"), os.path.join(mdir, "voices-v1.0.bin"))
+        import sounddevice as sd
+        self.sd, self.fila, self.parar_flag = sd, queue.Queue(), threading.Event()
+        threading.Thread(target=self._tocador, daemon=True).start()
+    def sintetizar(self, texto):
+        audio, sr = self.k.create(texto, voice=CFG["voz"], speed=CFG["velocidade_voz"], lang="pt-br")
+        return audio, sr
+    def falar(self, frase):
+        frase = limpar_para_fala(frase)
+        if frase:
+            self.fila.put(frase)
+    def calar(self):
+        self.parar_flag.set()
+        while not self.fila.empty():
+            self.fila.get_nowait()
+        self.sd.stop()
+    def _tocador(self):
+        while True:
+            frase = self.fila.get()
+            self.parar_flag.clear()
+            try:
+                audio, sr = self.sintetizar(frase)
+                if not self.parar_flag.is_set():
+                    self.sd.play(audio, sr); self.sd.wait()
+            except Exception as e:
+                print("[voz] erro:", e)
+
+def limpar_para_fala(t):
+    t = re.sub(r"\[\d+(,\s*\d+)*\]", "", t)            # [1], [1, 3]
+    t = re.sub(r"[*_#`>|]", "", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+# ---------------------------------------------------------------- cérebro (API no Mac)
+def perguntar_stream(pergunta, on_token):
+    import requests
+    r = requests.post(CFG["api_url"].rstrip("/") + "/ask/stream", stream=True, timeout=180,
+                      headers={"X-API-Key": CFG["api_key"]},
+                      json={"pergunta": pergunta, "modo": CFG["modo"], "sessao": CFG["sessao"]})
+    r.raise_for_status()
+    fim = {}
+    for line in r.iter_lines(decode_unicode=True):
+        if not line:
+            continue
+        ev = json.loads(line)
+        if ev["tipo"] == "token":
+            on_token(ev["texto"])
+        elif ev["tipo"] == "fim":
+            fim = ev
+        elif ev["tipo"] == "erro":
+            raise RuntimeError(ev["erro"])
+    return fim
+
+class Frases:
+    """Junta tokens e entrega frases completas para a voz começar a falar cedo."""
+    def __init__(self, cb):
+        self.buf, self.cb = "", cb
+    def add(self, t):
+        self.buf += t
+        while True:
+            m = re.search(r"(.+?[.!?;:])(\s+|$)", self.buf, re.S)
+            if not m or len(m.group(1)) < 12 and m.end() == len(self.buf):
+                break
+            self.cb(m.group(1)); self.buf = self.buf[m.end():]
+    def fechar(self):
+        if self.buf.strip():
+            self.cb(self.buf)
+        self.buf = ""
+
+# ---------------------------------------------------------------- janela sobre o jogo
+class Janela:
+    def __init__(self):
+        import tkinter as tk
+        self.tk, self.ui = tk, queue.Queue()
+        self.root = tk.Tk(); r = self.root
+        r.overrideredirect(True); r.attributes("-topmost", True); r.attributes("-alpha", CFG["janela_alpha"])
+        r.configure(bg="#11161c")
+        w, h = 520, 360
+        r.geometry(f"{w}x{h}+{r.winfo_screenwidth() - w - 24}+{60}")
+        self.status = tk.Label(r, text="Segure " + CFG["tecla_falar"].upper() + " e fale", fg="#7fd1ff", bg="#11161c",
+                               font=("Segoe UI", 10, "bold"), anchor="w")
+        self.status.pack(fill="x", padx=10, pady=(8, 2))
+        self.txt = tk.Text(r, wrap="word", bg="#11161c", fg="#e8edf2", insertbackground="#e8edf2", bd=0,
+                           font=("Segoe UI", 11), padx=10, pady=6)
+        self.txt.tag_configure("q", foreground="#ffcf6b", font=("Segoe UI", 11, "italic"))
+        self.txt.tag_configure("lista", foreground="#b9c4cf", font=("Segoe UI", 9))
+        self.txt.pack(fill="both", expand=True)
+        for wdg in (r, self.status):                       # arrastar a janela
+            wdg.bind("<ButtonPress-1>", self._ini); wdg.bind("<B1-Motion>", self._mov)
+        self.visivel, self.ultimo = True, time.time()
+        r.after(100, self._loop)
+    def _ini(self, e): self._x, self._y = e.x, e.y
+    def _mov(self, e): self.root.geometry(f"+{e.x_root - self._x}+{e.y_root - self._y}")
+    def post(self, *ev): self.ui.put(ev)
+    def _loop(self):
+        try:
+            while True:
+                ev = self.ui.get_nowait(); k = ev[0]; self.ultimo = time.time()
+                if k == "status": self.status.config(text=ev[1]); self._mostrar()
+                elif k == "nova": self.txt.delete("1.0", "end"); self.txt.insert("end", ev[1] + "\n\n", "q"); self._mostrar()
+                elif k == "token": self.txt.insert("end", ev[1]); self.txt.see("end")
+                elif k == "lista": self.txt.insert("end", "\n\n" + ev[1], "lista"); self.txt.see("1.0")
+                elif k == "alternar": (self._esconder() if self.visivel else self._mostrar())
+        except queue.Empty:
+            pass
+        if self.visivel and CFG["janela_segundos"] and time.time() - self.ultimo > CFG["janela_segundos"]:
+            self._esconder()
+        self.root.after(100, self._loop)
+    def _mostrar(self): self.root.deiconify(); self.root.attributes("-topmost", True); self.visivel = True
+    def _esconder(self): self.root.withdraw(); self.visivel = False
+
+# ---------------------------------------------------------------- orquestração
+class App:
+    def __init__(self):
+        print("Carregando transcrição e voz...", flush=True)
+        self.ouvido, self.voz, self.mic, self.jan = Ouvido(), Voz(), Microfone(), Janela()
+        self.ouvido.carregar_vocabulario()
+        self.gravando, self.ocupado = False, False
+    def apertou(self, _=None):
+        if self.gravando:
+            return
+        self.voz.calar()                                   # interrompe a fala anterior
+        self.gravando = True; self.mic.iniciar(); self.jan.post("status", "🎙️ Ouvindo...")
+    def soltou(self, _=None):
+        if not self.gravando:
+            return
+        self.gravando = False; audio = self.mic.parar()
+        if len(audio) < SR_MIC * 0.4 or self.ocupado:
+            self.jan.post("status", "Segure " + CFG["tecla_falar"].upper() + " e fale"); return
+        threading.Thread(target=self.processar, args=(audio,), daemon=True).start()
+    def processar(self, audio):
+        self.ocupado = True
+        try:
+            t0 = time.time(); self.jan.post("status", "📝 Transcrevendo...")
+            q = self.ouvido.transcrever(audio)
+            if not q:
+                self.jan.post("status", "Não entendi, tente de novo"); return
+            self.jan.post("nova", q); self.jan.post("status", f"🧠 Pensando... (transcrição {time.time() - t0:.1f}s)")
+            fr = Frases(self.voz.falar); t1 = time.time(); prim = []
+            def tok(t):
+                if not prim:
+                    prim.append(1); self.jan.post("status", f"🔊 Respondendo ({time.time() - t1:.1f}s)")
+                self.jan.post("token", t); fr.add(t)
+            fim = perguntar_stream(q, tok); fr.fechar()
+            if fim.get("lista_completa"):
+                self.jan.post("lista", "Lista completa:\n" + fim["lista_completa"])
+            self.jan.post("status", f"✅ {time.time() - t0:.1f}s · segure {CFG['tecla_falar'].upper()} para outra pergunta")
+        except Exception as e:
+            self.jan.post("status", f"⚠️ Erro: {e}")
+        finally:
+            self.ocupado = False
+    def rodar(self):
+        import keyboard
+        keyboard.on_press_key(CFG["tecla_falar"], self.apertou, suppress=False)
+        keyboard.on_release_key(CFG["tecla_falar"], self.soltou, suppress=False)
+        keyboard.add_hotkey(CFG["tecla_janela"], lambda: self.jan.post("alternar"))
+        print(f"Pronto! Segure {CFG['tecla_falar'].upper()} para falar, {CFG['tecla_janela'].upper()} mostra/esconde a janela.", flush=True)
+        self.jan.root.mainloop()
+
+# ---------------------------------------------------------------- autoteste (sem microfone/teclado)
+def autoteste(tocar):
+    import soundfile as sf
+    t = time.time(); v = Voz(); print(f"[voz] carregada em {time.time() - t:.1f}s")
+    frase = "Para conseguir o Rhino, derrote o Jackal em Fossa, Vênus."
+    t = time.time(); audio, sr = v.sintetizar(frase); print(f"[voz] sintetizou {len(audio)/sr:.1f}s de áudio em {time.time() - t:.1f}s")
+    sf.write(os.path.join(AQUI, "teste_voz.wav"), audio, sr)
+    if tocar:
+        v.sd.play(audio, sr); v.sd.wait()
+    t = time.time(); o = Ouvido(); print(f"[stt] carregado em {time.time() - t:.1f}s")
+    import scipy.signal as ss
+    a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)
+    t = time.time(); txt = o.transcrever(a16); print(f"[stt] '{txt}' em {time.time() - t:.1f}s")
+    if CFG["api_key"]:
+        t = time.time(); prim = []
+        fim = perguntar_stream("onde consigo o rhino?", lambda x: prim.append(time.time() - t) if not prim else None)
+        print(f"[api] 1º token {prim[0] if prim else -1:.1f}s, total {time.time() - t:.1f}s -> {fim.get('resposta', '')[:200]}")
+    else:
+        print("[api] sem api_key no config.json: pulei o teste da API")
+
+if __name__ == "__main__":
+    ap = argparse.ArgumentParser(); ap.add_argument("--teste", action="store_true"); ap.add_argument("--tocar", action="store_true")
+    a = ap.parse_args()
+    autoteste(a.tocar) if a.teste else App().rodar()

@@ -12,5 +12,10 @@ MAX_CONTEXT_CHARS = int(os.environ.get("WF_MAX_CTX", "14000"))
 KEEP_ALIVE = os.environ.get("WF_KEEP_ALIVE", "30m")
 EMBED_SCOPE = os.environ.get("WF_EMBED_SCOPE", "seletivo")   # "seletivo" ou "tudo"
 EMBED_CHARS = int(os.environ.get("WF_EMBED_CHARS", "1200"))
-NUM_CTX = int(os.environ.get("WF_NUM_CTX", "24576"))   # fixo para o Ollama não recarregar o modelo a cada pergunta
+NUM_CTX = int(os.environ.get("WF_NUM_CTX", "8192"))    # fixo para o Ollama não recarregar o modelo a cada pergunta
 ROUTER_LLM = os.environ.get("WF_ROUTER_LLM", "off")   # off | auto | on  (no A/B o LLM roteador não melhorou a busca e deixou mais lento)
+# Perfis de resposta. Leitura do contexto (~140 tok/s no M4) é o gargalo: menos contexto = resposta mais rápida.
+MODES = {
+    "texto": {"budget": 9000, "per_chunk": 2500, "num_predict": 700},
+    "voz":   {"budget": 2800, "per_chunk": 1000, "num_predict": 160},
+}

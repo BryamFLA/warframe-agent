@@ -2,3 +2,7 @@
 cache/
 __pycache__/
 *.pyc
+cliente_pc/.venv*/
+cliente_pc/modelos/
+cliente_pc/config.json
+cliente_pc/*.wav

@@ -16,6 +16,12 @@ Use SOMENTE as informações do CONTEXTO (trechos do second brain do jogo). Regr
 - Quando pedirem "todos os itens", liste todos os itens que estão no contexto, agrupados por tipo.
 - Se houver INVENTÁRIO DO JOGADOR, adapte a resposta ao que ele já tem ou não tem."""
 
+VOZ = """
+MODO VOZ: a resposta será FALADA em voz alta durante o jogo.
+- No máximo 3 frases curtas (até ~60 palavras), com o essencial primeiro.
+- Sem markdown, sem listas, sem emojis, sem citações [n], sem tabelas.
+- Escreva números por extenso quando curtos ("dois Orokin Cell"), porcentagens como "38 por cento"."""
+
 class Agent:
     def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router=None, use_vectors=True):
         if router_model: config.MODEL_ROUTER = router_model
@@ -37,7 +43,7 @@ class Agent:
         hits = retrieve(self.ix, q, r, ents, use_vectors=self.use_vectors)
         return {"rota": r, "entidades": ents, "hits": hits, "t_busca": round(time.time() - t, 2)}
 
-    def context(self, hits, budget=None):
+    def context(self, hits, budget=None, per_chunk=2500):
         budget = budget or config.MAX_CONTEXT_CHARS
         parts, used, total = [], [], 0
         for n, i in enumerate(hits, 1):
@@ -46,6 +52,11 @@ class Agent:
             txt = re.sub(r"\[\[[^\]|]*?\\?\|([^\]]+)\]\]", r"\1", txt)          # [[caminho|Nome]] -> Nome
             txt = re.sub(r"\[\[([^\]]+?)(\.md)?\]\]", lambda m: m.group(1).split("/")[-1], txt)
             txt = re.sub(r"^> \[!\w+\]\s*", "", txt, flags=re.M)
+            txt = re.sub(r"^\|[-| :]+\|\s*$\n?", "", txt, flags=re.M)              # linha separadora de tabela
+            txt = re.sub(r"[ \t]{2,}", " ", txt)
+            lim = per_chunk * 2 if n == 1 else per_chunk     # o trecho mais relevante entra mais completo
+            if len(txt) > lim:
+                txt = txt[:lim].rsplit("\n", 1)[0] + "\n…"
             block = f"[{n}] ({c.path} — {c.head or c.title})\n{txt.strip()}"
             if total + len(block) > budget and parts:
                 break
@@ -75,32 +86,34 @@ class Agent:
                 lines.append(f"- {name} — {how[:110]}{'…' if len(how) > 110 else ''}")
         return "\n".join(lines)
 
-    def ask(self, q, inventario=None, history=None, on_token=None):
+    def ask(self, q, inventario=None, history=None, on_token=None, modo="texto"):
+        M = config.MODES.get(modo, config.MODES["texto"])
         s = self.search(q)
         big = s["rota"]["intencao"] == "listar_itens_local"
         hits = s["hits"]
         list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []
-        ctx, used = self.context([i for i in hits if i not in list_hits])
+        ctx, used = self.context([i for i in hits if i not in list_hits], budget=M["budget"], per_chunk=M["per_chunk"])
         user = f"CONTEXTO:\n{ctx}\n\n"
         if big:
             user += "(A lista completa de itens será anexada automaticamente depois da sua resposta: faça só um resumo organizado do que dá para conseguir e fazer lá, com os destaques.)\n\n"
         if inventario:
             user += "INVENTÁRIO DO JOGADOR:\n" + json.dumps(inventario, ensure_ascii=False)[:6000] + "\n\n"
         user += f"PERGUNTA: {q}"
-        msgs = [{"role": "system", "content": SYSTEM}] + (history or [])[-6:] + [{"role": "user", "content": user}]
+        msgs = [{"role": "system", "content": SYSTEM + (VOZ if modo == "voz" else "")}] + (history or [])[-6:] + [{"role": "user", "content": user}]
         t = time.time()
         if on_token:
-            ans, raw = llm.chat_stream(self.answer_model, msgs, on_token, temperature=0.3, num_predict=1000)
+            ans, raw = llm.chat_stream(self.answer_model, msgs, on_token, temperature=0.3, num_predict=M["num_predict"])
         else:
-            ans, raw = llm.chat(self.answer_model, msgs, temperature=0.3, num_predict=1000)
+            ans, raw = llm.chat(self.answer_model, msgs, temperature=0.3, num_predict=M["num_predict"])
         ans = ans.strip()
-        if list_hits:
-            extra = "\n\n### Lista completa\n" + self.full_list(list_hits)
+        lista = self.full_list(list_hits) if list_hits else ""
+        if lista and modo != "voz":   # na voz a lista vai separada (para a tela), não é falada
+            extra = "\n\n### Lista completa\n" + lista
             ans += extra
             if on_token:
                 on_token(extra)
         fontes = [{"n": n, "nota": self.ix.chunks[i].path, "secao": self.ix.chunks[i].head} for n, i in enumerate(used, 1)]
-        return {"resposta": ans, "fontes": fontes, "rota": s["rota"],
+        return {"resposta": ans, "lista_completa": lista if modo == "voz" else "", "fontes": fontes, "rota": s["rota"],
                 "entidades": [e["titulo"] for e in s["entidades"]],
                 "tempo": {"busca": s["t_busca"], "resposta": round(time.time() - t, 1),
                           "tokens_entrada": raw.get("prompt_eval_count"), "tokens_saida": raw.get("eval_count")}}
