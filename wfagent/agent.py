@@ -32,9 +32,9 @@ class Agent:
             use_llm_router = {"off": False, "auto": "auto", "on": True}[config.ROUTER_LLM]
         self.use_llm_router, self.use_vectors = use_llm_router, use_vectors
 
-    def search(self, q):
+    def search(self, q, fonetico=False):
         t = time.time()
-        ents = self.ents.find(q)
+        ents = self.ents.find(q, fonetico=fonetico)
         r = do_route(q, ents, self.use_llm_router)
         for term in r.get("termos_jogo", []):
             for e in self.ents.find(term, fuzzy=False):
@@ -88,7 +88,7 @@ class Agent:
 
     def ask(self, q, inventario=None, history=None, on_token=None, modo="texto"):
         M = config.MODES.get(modo, config.MODES["texto"])
-        s = self.search(q)
+        s = self.search(q, fonetico=(modo == "voz"))
         big = s["rota"]["intencao"] == "listar_itens_local"
         hits = s["hits"]
         list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []

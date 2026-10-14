@@ -221,7 +221,7 @@ def autoteste(tocar):
     sf.write(os.path.join(AQUI, "teste_voz.wav"), audio, sr)
     if tocar:
         v.sd.play(audio, sr); v.sd.wait()
-    t = time.time(); o = Ouvido(); print(f"[stt] carregado em {time.time() - t:.1f}s")
+    t = time.time(); o = Ouvido(); o.carregar_vocabulario(); print(f"[stt] carregado em {time.time() - t:.1f}s")
     import scipy.signal as ss
     a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)
     t = time.time(); txt = o.transcrever(a16); print(f"[stt] '{txt}' em {time.time() - t:.1f}s")

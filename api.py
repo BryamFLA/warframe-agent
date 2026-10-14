@@ -90,8 +90,18 @@ def vocabulario(x_api_key: str | None = Header(None), key: str | None = Query(No
     """Nomes do jogo para o 'initial_prompt' do Whisper (melhora a transcrição de nomes como Rhino, Cetus, Orokin)."""
     check(x_api_key, key)
     items = ag.ents.items
-    wf = sorted({e["title"] for e in items.values() if e.get("tipo") == "warframe" and "Prime" not in str(e["title"]) and "Umbra" not in str(e["title"])})
+    def rank(e):
+        try: return int(str(e.get("uso_2025_rank", "999/1")).split("/")[0])
+        except ValueError: return 999
+    wf = [e["title"] for e in sorted((e for e in items.values() if e.get("tipo") == "warframe"
+          and "Prime" not in str(e["title"]) and "Umbra" not in str(e["title"])), key=rank)]
+    chefes = [e["title"] for p, e in items.items() if p.startswith("lore/chefes/") and "/_" not in p]
     base = ["Warframe", "Tenno", "Orokin", "Grineer", "Corpus", "Infested", "Sentient", "Lotus", "Ordis", "Cetus", "Fortuna",
             "Deimos", "Necralisk", "Zariman", "Duviri", "Höllvania", "Steel Path", "Helminth", "Riven", "Arcane", "Forma",
-            "Orokin Cell", "Argon Crystal", "Cryotic", "Neurodes", "Kuva Lich", "Archon Shard", "Incarnon", "Void", "Relíquia", "Prime", "build"]
-    return {"vocabulario": ", ".join(base + wf)}
+            "Orokin Cell", "Argon Crystal", "Cryotic", "Neurodes", "Kuva Lich", "Archon Shard", "Incarnon", "Void", "Prime"]
+    texto, out = "", []
+    for n in base + wf[:45] + chefes + wf[45:]:     # mais usados primeiro; o Whisper só aproveita ~900 caracteres
+        if len(texto) + len(n) + 2 > 900:
+            break
+        out.append(n); texto = ", ".join(out)
+    return {"vocabulario": texto}
