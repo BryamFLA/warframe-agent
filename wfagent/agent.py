@@ -11,17 +11,19 @@ Use SOMENTE as informações do CONTEXTO (trechos do second brain do jogo). Regr
 - Seja direto: no máximo ~250 palavras, exceto quando pedirem uma lista completa. Não repita o contexto inteiro.
 - Seja organizado (passos numerados para "como fazer", listas para "liste").
 - Mantenha nomes do jogo em inglês (Excalibur, Orokin Cell, Steel Path...).
-- Cite as fontes no fim como [n] usando os números dos trechos usados.
+- Cite as fontes no texto como [n] (números dos trechos). Não escreva uma lista "Fontes" no fim: ela é anexada automaticamente.
 - Se o contexto não tiver a resposta, diga que não encontrou no guia e sugira o que o jogador pode procurar. Não invente números, chances ou nomes.
 - Quando pedirem "todos os itens", liste todos os itens que estão no contexto, agrupados por tipo.
 - Se houver INVENTÁRIO DO JOGADOR, adapte a resposta ao que ele já tem ou não tem."""
 
 class Agent:
-    def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router="auto", use_vectors=True):
+    def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router=None, use_vectors=True):
         if router_model: config.MODEL_ROUTER = router_model
         self.answer_model = answer_model or config.MODEL_ANSWER
         self.ix = Index(embed_model=embed_model, with_vectors=use_vectors)
         self.ents = EntityIndex()
+        if use_llm_router is None:
+            use_llm_router = {"off": False, "auto": "auto", "on": True}[config.ROUTER_LLM]
         self.use_llm_router, self.use_vectors = use_llm_router, use_vectors
 
     def search(self, q):
@@ -50,20 +52,55 @@ class Agent:
             parts.append(block); used.append(i); total += len(block)
         return "\n\n".join(parts), used
 
-    def ask(self, q, inventario=None, history=None):
+    def full_list(self, hits):
+        """Monta a lista completa de itens a partir das seções 📦 (sem LLM: completa e instantânea)."""
+        out = []
+        for i in hits:
+            c = self.ix.chunks[i]
+            if "📦" not in c.head or "Resumo" in c.head:
+                continue
+            cat = re.sub(r"^📦 Itens de .*? — ", "", c.head)
+            cat = re.sub(r" — parte \d+/\d+.*$| \(.*$", "", cat)
+            rows = re.findall(r"^\| \[\[[^\]|]*?\\?\|([^\]]+)\]\] \| (.*?) \|\s*$", c.text, re.M)
+            if not rows:
+                continue
+            if not out or out[-1][0] != cat:
+                out.append((cat, []))
+            out[-1][1].extend(rows)
+        lines = []
+        for cat, rows in out:
+            lines.append(f"\n**{cat} ({len(rows)})**")
+            for name, how in rows:
+                how = re.sub(r"\*\*|\[\[[^\]|]*?\\?\|([^\]]+)\]\]", lambda m: m.group(1) or "", how)
+                lines.append(f"- {name} — {how[:110]}{'…' if len(how) > 110 else ''}")
+        return "\n".join(lines)
+
+    def ask(self, q, inventario=None, history=None, on_token=None):
         s = self.search(q)
         big = s["rota"]["intencao"] == "listar_itens_local"
-        ctx, used = self.context(s["hits"], budget=config.MAX_CONTEXT_CHARS * (3 if big else 1))
+        hits = s["hits"]
+        list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []
+        ctx, used = self.context([i for i in hits if i not in list_hits])
         user = f"CONTEXTO:\n{ctx}\n\n"
+        if big:
+            user += "(A lista completa de itens será anexada automaticamente depois da sua resposta: faça só um resumo organizado do que dá para conseguir e fazer lá, com os destaques.)\n\n"
         if inventario:
             user += "INVENTÁRIO DO JOGADOR:\n" + json.dumps(inventario, ensure_ascii=False)[:6000] + "\n\n"
         user += f"PERGUNTA: {q}"
         msgs = [{"role": "system", "content": SYSTEM}] + (history or [])[-6:] + [{"role": "user", "content": user}]
         t = time.time()
-        ans, raw = llm.chat(self.answer_model, msgs, temperature=0.3, num_ctx=config.NUM_CTX,
-                            num_predict=3000 if big else 1000)
+        if on_token:
+            ans, raw = llm.chat_stream(self.answer_model, msgs, on_token, temperature=0.3, num_predict=1000)
+        else:
+            ans, raw = llm.chat(self.answer_model, msgs, temperature=0.3, num_predict=1000)
+        ans = ans.strip()
+        if list_hits:
+            extra = "\n\n### Lista completa\n" + self.full_list(list_hits)
+            ans += extra
+            if on_token:
+                on_token(extra)
         fontes = [{"n": n, "nota": self.ix.chunks[i].path, "secao": self.ix.chunks[i].head} for n, i in enumerate(used, 1)]
-        return {"resposta": ans.strip(), "fontes": fontes, "rota": s["rota"],
+        return {"resposta": ans, "fontes": fontes, "rota": s["rota"],
                 "entidades": [e["titulo"] for e in s["entidades"]],
                 "tempo": {"busca": s["t_busca"], "resposta": round(time.time() - t, 1),
                           "tokens_entrada": raw.get("prompt_eval_count"), "tokens_saida": raw.get("eval_count")}}

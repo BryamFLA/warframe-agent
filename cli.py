@@ -17,8 +17,9 @@ ag = Agent()
 hist = []
 
 def run(q):
-    r = ag.ask(q, inventario=inv, history=hist)
-    print("\n" + r["resposta"])
+    print()
+    r = ag.ask(q, inventario=inv, history=hist, on_token=lambda x: print(x, end="", flush=True))
+    print()
     print("\nFontes: " + "; ".join(f"[{f['n']}] {f['nota']}" for f in r["fontes"]))
     if a.debug:
         print(f"\n[debug] rota={r['rota']} entidades={r['entidades']} tempo={r['tempo']}")

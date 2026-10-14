@@ -27,3 +27,24 @@ def embed(texts, model=None, batch=32):
                                    "keep_alive": config.KEEP_ALIVE, "truncate": True})
         vecs.extend(out["embeddings"])
     return vecs
+
+def chat_stream(model, messages, on_token, temperature=0.3, num_ctx=None, num_predict=None, think=False):
+    """Como chat(), mas chama on_token(texto) a cada pedaço gerado. Retorna (texto, último_evento)."""
+    p = {"model": model, "messages": messages, "stream": True, "think": think, "keep_alive": config.KEEP_ALIVE,
+         "options": {"temperature": temperature, "num_ctx": num_ctx or config.NUM_CTX}}
+    if num_predict:
+        p["options"]["num_predict"] = num_predict
+    req = urllib.request.Request(config.OLLAMA + "/api/chat", data=json.dumps(p).encode(),
+                                 headers={"Content-Type": "application/json"})
+    out, last = [], {}
+    with urllib.request.urlopen(req, timeout=900) as r:
+        for line in r:
+            if not line.strip():
+                continue
+            ev = json.loads(line); last = ev
+            piece = ev.get("message", {}).get("content", "")
+            if piece:
+                out.append(piece); on_token(piece)
+            if ev.get("done"):
+                break
+    return "".join(out), last
