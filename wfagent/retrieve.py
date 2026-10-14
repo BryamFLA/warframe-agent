@@ -10,7 +10,7 @@ SECTION = {  # intenção -> regex do heading da seção preferida
     "jornada": r"Passo a Passo|Dicas|Narrativa|Hist[oó]ria|Pr[eé]-requisitos|Recompensas|Etapas",
     "listar_itens_local": r"📦|O Que Farmar|Recursos|O Que Fazer",
     "o_que_fazer": r"Recomenda|Regras|Fase|Checklist|Prioridade|Rotina",
-    "mecanica": r"Como Funciona|Mec[aâ]nica|Resumo|Dicas",
+    "mecanica": r"Como Funciona|Mec[aâ]nica|Resumo|Dicas|Desbloque|Requisit|Como Acessar|Como Come[cç]ar|Pr[eé]-requisito|Como Usar",
 }
 DEFAULT_NOTES = {
     "historia": ["lore/cronologia/cronologia.md"],
@@ -69,4 +69,15 @@ def retrieve(ix, q, route, ents, top_k=None, use_vectors=True):
         allparts = [i for i in ix.by_path.get(route["local"], []) if "📦" in ix.chunks[i].head]
         hits = allparts + [h for h in hits if h not in allparts]
         top_k = max(top_k, len(allparts) + 3)
-    return hits[:top_k]
+    # seção longa dividida em sub-trechos: quando o trecho "pai" entra, os 2 primeiros sub-trechos vêm logo depois
+    out = []
+    for h in hits:
+        if h in out:
+            continue
+        out.append(h)
+        c = ix.chunks[h]
+        for j in range(h + 1, min(h + 3, len(ix.chunks))):
+            cj = ix.chunks[j]
+            if cj.path == c.path and cj.head.startswith(c.head + " > ") and j not in out:
+                out.append(j)
+    return out[:top_k]
