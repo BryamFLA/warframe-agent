@@ -1,0 +1,15 @@
+"""Configuração do agente. Tudo pode ser sobrescrito por variáveis de ambiente WF_*."""
+import os
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+VAULT = os.environ.get("WF_VAULT", os.path.join(os.path.dirname(ROOT), "warframe-vault"))
+CACHE = os.environ.get("WF_CACHE", os.path.join(ROOT, "cache"))
+OLLAMA = os.environ.get("WF_OLLAMA", "http://localhost:11434")
+MODEL_ROUTER = os.environ.get("WF_MODEL_ROUTER", "qwen3.5:4b")    # entende/reescreve a pergunta
+MODEL_ANSWER = os.environ.get("WF_MODEL_ANSWER", "qwen3.5:9b")    # escreve a resposta
+MODEL_EMBED = os.environ.get("WF_MODEL_EMBED", "qwen3-embedding:0.6b")
+TOP_K = int(os.environ.get("WF_TOP_K", "8"))          # chunks enviados ao modelo
+MAX_CONTEXT_CHARS = int(os.environ.get("WF_MAX_CTX", "14000"))
+KEEP_ALIVE = os.environ.get("WF_KEEP_ALIVE", "30m")
+EMBED_SCOPE = os.environ.get("WF_EMBED_SCOPE", "seletivo")   # "seletivo" ou "tudo"
+EMBED_CHARS = int(os.environ.get("WF_EMBED_CHARS", "1200"))
+NUM_CTX = int(os.environ.get("WF_NUM_CTX", "24576"))   # fixo para o Ollama não recarregar o modelo a cada pergunta
