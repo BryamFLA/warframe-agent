@@ -2,10 +2,11 @@
 import time, json, re
 from . import config, llm
 from .index import Index, norm_text
-from .entities import corrigir_nomes
+from .entities import corrigir_nomes, words
 from .entities import EntityIndex
 from .router import route as do_route
 from .retrieve import retrieve
+from .reescrita import reescrever
 
 SYSTEM = """Você é um assistente especialista em Warframe e responde em português do Brasil.
 Use SOMENTE as informações do CONTEXTO (trechos do second brain do jogo). Regras:
@@ -30,7 +31,8 @@ SEGUIMENTO = re.compile(r"\b(dele|dela|deles|delas|nele|nela|ele|ela|isso|nisso|
                         r"aquele|aquela|mesmo|mesma|la|lá)\b|^e\b|^(e )?(qual|quais|onde|como|quanto)\b.{0,25}$")
 
 class Agent:
-    def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router=None, use_vectors=True):
+    def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router=None, use_vectors=True,
+                 reescrever=None):
         if router_model: config.MODEL_ROUTER = router_model
         self.answer_model = answer_model or config.MODEL_ANSWER
         self.ix = Index(embed_model=embed_model, with_vectors=use_vectors)
@@ -38,10 +40,30 @@ class Agent:
         if use_llm_router is None:
             use_llm_router = {"off": False, "auto": "auto", "on": True}[config.ROUTER_LLM]
         self.use_llm_router, self.use_vectors = use_llm_router, use_vectors
+        self.reescrever = config.REESCREVER if reescrever is None else reescrever
 
-    def search(self, q, fonetico=False, anteriores=()):
+    def search(self, q, fonetico=False, anteriores=(), history=None):
         t = time.time()
-        ents = self.ents.find(q, fonetico=fonetico)
+        q_orig, qr = q, None
+        ents0 = self.ents.find(q, fonetico=fonetico)
+        exatas = [e for e in ents0 if e["termo"] == e.get("falado")]
+        seguimento = bool(history) and bool(SEGUIMENTO.search(norm_text(q)))
+        # reescreve só quando ajuda: continuação de conversa, nome aproximado (voz/erro) ou nenhum nome reconhecido
+        if self.reescrever and (seguimento or not exatas or len(exatas) < len(ents0)):
+            qr = reescrever(q, history if seguimento or not exatas else None,
+                            [e["titulo"] for e in ents0], self.answer_model)
+            if qr:
+                achados = {p for e in self.ents.find(qr, fonetico=fonetico) for p in e["caminhos"]}
+                if any(e["caminhos"][0] not in achados for e in exatas):
+                    qr = None  # o modelo trocou/perdeu um nome que o jogador disse certo: descarta a reescrita
+            q = qr or q
+        t_re = round(time.time() - t, 2)
+        ents = self.ents.find(q, fonetico=fonetico) if qr else ents0
+        for e in exatas:       # nomes ditos certos nunca se perdem
+            if e["caminhos"][0] not in [x["caminhos"][0] for x in ents]:
+                ents.append(e)
+        if not ents and qr:
+            ents = ents0
         herdadas = []
         if not ents and anteriores and SEGUIMENTO.search(norm_text(q)):
             # pergunta de continuação ("e a build dele?"): herda o item/lugar da pergunta anterior
@@ -61,8 +83,13 @@ class Agent:
             for e in self.ents.find(term, fuzzy=False):
                 if e["caminhos"][0] not in [x["caminhos"][0] for x in ents]:
                     ents.append(e)
-        hits = retrieve(self.ix, q, r, ents, use_vectors=self.use_vectors)
-        return {"rota": r, "entidades": ents, "hits": hits, "t_busca": round(time.time() - t, 2)}
+        if qr and not seguimento:   # sem conversa: busca com o texto original + o reescrito (um cobre o outro)
+            r["consulta_busca"] = qr if r.get("consulta_busca") in (None, q) else r["consulta_busca"]
+            hits = retrieve(self.ix, q_orig, r, ents, use_vectors=self.use_vectors)
+        else:
+            hits = retrieve(self.ix, q, r, ents, use_vectors=self.use_vectors)
+        return {"rota": r, "entidades": ents, "hits": hits, "t_busca": round(time.time() - t, 2),
+                "pergunta_busca": q, "t_reescrita": t_re}
 
     def context(self, hits, budget=None, per_chunk=2500):
         budget = budget or config.MAX_CONTEXT_CHARS
@@ -110,7 +137,8 @@ class Agent:
     def ask(self, q, inventario=None, history=None, on_token=None, modo="texto"):
         M = config.MODES.get(modo, config.MODES["texto"])
         s = self.search(q, fonetico=(modo == "voz"),
-                        anteriores=[m["content"] for m in reversed(history or []) if m.get("role") == "user"])
+                        anteriores=[m["content"] for m in reversed(history or []) if m.get("role") == "user"],
+                        history=history)
         big = s["rota"]["intencao"] == "listar_itens_local"
         hits = s["hits"]
         list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []
@@ -123,7 +151,11 @@ class Agent:
         if s["entidades"]:   # pergunta transcrita de voz/digitada com erro ("ruino", "setus"): diz ao modelo o nome certo
             user += ("NOMES DO JOGO RECONHECIDOS NA PERGUNTA (podem estar escritos errado na pergunta; use estes): "
                      + ", ".join(dict.fromkeys(e["titulo"] for e in s["entidades"])) + "\n\n")
-        user += f"PERGUNTA: {corrigir_nomes(q, s['entidades'])}"
+        pq = corrigir_nomes(q, s["entidades"])
+        if norm_text(s["pergunta_busca"]) != norm_text(pq):
+            user += f"PERGUNTA DO JOGADOR: {pq}\nPERGUNTA INTERPRETADA (use para entender referências e nomes): {s['pergunta_busca']}"
+        else:
+            user += f"PERGUNTA: {pq}"
         msgs = [{"role": "system", "content": SYSTEM + (VOZ if modo == "voz" else "")}] + (history or [])[-6:] + [{"role": "user", "content": user}]
         t = time.time()
         if on_token:
@@ -139,6 +171,6 @@ class Agent:
                 on_token(extra)
         fontes = [{"n": n, "nota": self.ix.chunks[i].path, "secao": self.ix.chunks[i].head} for n, i in enumerate(used, 1)]
         return {"resposta": ans, "lista_completa": lista if modo == "voz" else "", "fontes": fontes, "rota": s["rota"],
-                "entidades": [e["titulo"] for e in s["entidades"]],
-                "tempo": {"busca": s["t_busca"], "resposta": round(time.time() - t, 1),
+                "entidades": [e["titulo"] for e in s["entidades"]], "pergunta_busca": s["pergunta_busca"],
+                "tempo": {"busca": s["t_busca"], "reescrita": s["t_reescrita"], "resposta": round(time.time() - t, 1),
                           "tokens_entrada": raw.get("prompt_eval_count"), "tokens_saida": raw.get("eval_count")}}

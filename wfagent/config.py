@@ -14,6 +14,8 @@ EMBED_SCOPE = os.environ.get("WF_EMBED_SCOPE", "seletivo")   # "seletivo" ou "tu
 EMBED_CHARS = int(os.environ.get("WF_EMBED_CHARS", "1200"))
 NUM_CTX = int(os.environ.get("WF_NUM_CTX", "8192"))    # fixo para o Ollama não recarregar o modelo a cada pergunta
 ROUTER_LLM = os.environ.get("WF_ROUTER_LLM", "off")   # off | auto | on  (no A/B o LLM roteador não melhorou a busca e deixou mais lento)
+# Reescrita da pergunta pelo modelo de resposta antes da busca (histórico, nomes mal transcritos): "on" | "off"
+REESCREVER = os.environ.get("WF_REESCREVER", "on") == "on"
 # Perfis de resposta. Leitura do contexto (~140 tok/s no M4) é o gargalo: menos contexto = resposta mais rápida.
 MODES = {
     "texto": {"budget": 9000, "per_chunk": 2500, "num_predict": 700},

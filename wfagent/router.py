@@ -19,7 +19,7 @@ RULES = [  # (intenção, regex sobre a pergunta normalizada sem acento)
     ("historia", r"\b(historia|lore|enredo|narrativa|quem (e|foi|era))\b"),
     ("como_construir", r"\b(passo a passo|como (criar|construir|craftar|fabricar|montar|fazer) )|\bforja\b|\bfoundry\b"),
     ("onde_conseguir", r"\b(onde|como) (eu )?((posso|poderia|devo|da pra|consigo) )?(consigo|conseguir|acho|achar|encontro|encontrar|farmo|farmar|dropa|obter|obtenho|pego|pegar|compro|comprar)\b|\bonde (dropa|cai|farma)\b|\bdrop(a|s)?\b"),
-    ("mecanica", r"\bo que (e|sao|significa|faz)\b|\bcomo funciona|\bpra que serve|\bpara que serve|\bcomo (libero|liberar|desbloqueio|desbloquear|subir|evoluir|aumento|aumentar|ganhar|ganho)\b"),
+    ("mecanica", r"\bo que (e|sao|significa|faz)\b|\bcomo funciona|\bpra que serve|\bpara que serve|\bcomo (eu )?(fa[cç]o pra |faco para |posso )?(libero|liberar|desbloqueio|desbloquear|destravo|destravar|subir|evoluir|aumento|aumentar|ganhar|ganho|acesso|acessar|entro|entrar)\b"),
     ("o_que_fazer", r"\bo que (eu )?((posso|devo|consigo|da pra|tem pra|tem para|vale) )?(faco|fazer)\b|\bproximo passo\b|\bpor onde comecar\b|\b(diari|semana)"),
     ("comparar", r"\b(melhor|pior) (que|entre)\b|\bvs\.?\b|\bcomparar\b|\bou o\b.*\?"),
 ]

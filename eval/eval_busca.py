@@ -10,9 +10,10 @@ ap = argparse.ArgumentParser()
 ap.add_argument("--embed"); ap.add_argument("--sem-vetor", action="store_true")
 ap.add_argument("--router", default="off"); ap.add_argument("--k", type=int, default=5)
 ap.add_argument("--amostra", type=int, default=120)
+ap.add_argument("--reescrever", action="store_true", help="liga a reescrita pelo LLM (lento: ~1 s por pergunta)")
 a = ap.parse_args()
 router = {"off": False, "auto": "auto", "on": True}[a.router]
-ag = Agent(embed_model=a.embed, use_llm_router=router, use_vectors=not a.sem_vetor)
+ag = Agent(embed_model=a.embed, use_llm_router=router, use_vectors=not a.sem_vetor, reescrever=a.reescrever)
 random.seed(7)
 V = config.VAULT
 def title(rel):
@@ -74,7 +75,7 @@ for cat, q, p, rx in cases:
         top = ag.ix.chunks[s["hits"][0]] if s["hits"] else None
         fails[cat].append((q, s["rota"]["intencao"], top.path + " :: " + top.head[:40] if top else "-"))
 tot = [sum(v[0] for v in res.values()), sum(v[1] for v in res.values())]
-print(f"\nCONFIG embed={ag.ix.embed_model} vetor={not a.sem_vetor} router={a.router} k={a.k}  ({len(cases)} perguntas, {time.time()-t0:.0f}s)")
+print(f"\nCONFIG embed={ag.ix.embed_model} vetor={not a.sem_vetor} router={a.router} reescrita={a.reescrever} k={a.k}  ({len(cases)} perguntas, {time.time()-t0:.0f}s)")
 for c, (x, n) in res.items():
     print(f"  {c:28s} {x:4d}/{n:<4d} {100*x/n:5.1f}%")
 print(f"  {'TOTAL':28s} {tot[0]:4d}/{tot[1]:<4d} {100*tot[0]/tot[1]:5.1f}%")
