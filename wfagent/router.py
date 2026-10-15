@@ -5,7 +5,7 @@ from . import config, llm
 from .index import norm_text
 
 INTENTS = ["onde_conseguir", "como_construir", "build", "historia", "jornada", "listar_itens_local",
-           "o_que_fazer", "atividades_local", "mecanica", "comparar", "outro"]
+           "o_que_fazer", "atividades_local", "contagem", "mecanica", "comparar", "outro"]
 HUBS = {"cetus": "locais/open-worlds/cetus.md", "plains": "locais/open-worlds/cetus.md", "eidolon": "locais/open-worlds/cetus.md",
         "fortuna": "locais/open-worlds/fortuna.md", "vallis": "locais/open-worlds/fortuna.md",
         "deimos": "locais/open-worlds/deimos.md", "necralisk": "locais/open-worlds/deimos.md", "cambion": "locais/open-worlds/deimos.md",
@@ -35,6 +35,9 @@ def rule_route(q, ents=()):
     if hub and intent in ("o_que_fazer", "outro", "mecanica") and re.search(
             r"\b(fazer|faco|atividades?|tem (em|no|na|pra fazer)|vale a pena)\b", n) and not re.search(r"\b(farmar|conseguir|adquirir|itens)\b", n):
         intent = "atividades_local"
+    if re.search(r"\b(quant[oa]s|numero de|total de|quantidade de)\b", n) and any(
+            p.endswith("_Indice.md") for e in ents for p in e["caminhos"]):
+        intent = "contagem"        # "quantos warframes tem no jogo?" -> seção 🔢 Contagem do índice
     if intent == "listar_itens_local" and not hub:
         intent = "outro"
     if hub and intent in ("outro", "o_que_fazer") and re.search(r"\b(farmar|conseguir|adquirir|itens)\b", n):

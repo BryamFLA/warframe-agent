@@ -10,6 +10,7 @@ SECTION = {  # intenção -> regex do heading da seção preferida
     "jornada": r"Passo a Passo|Dicas|Narrativa|Hist[oó]ria|Pr[eé]-requisitos|Recompensas|Etapas",
     "listar_itens_local": r"📦|O Que Farmar|Recursos|O Que Fazer",
     "o_que_fazer": r"Recomenda|Regras|Fase|Checklist|Prioridade|Rotina",
+    "contagem": r"Contagem",
     "atividades_local": r"O Que (D[aá] para )?Fazer|Conte[uú]do Especial|Miss[oõ]es|Como Chegar|O Que Farmar|Ficha|Recompensas|Vendedores",
     "mecanica": r"Como Funciona|Mec[aâ]nica|Resumo|Dicas|Desbloque|Requisit|Como Acessar|Como Come[cç]ar|Pr[eé]-requisito|Como Usar",
 }
@@ -63,7 +64,7 @@ def retrieve(ix, q, route, ents, top_k=None, use_vectors=True):
         if pref_dirs and not p.startswith(pref_dirs) and any(x.startswith(pref_dirs) for x in ent_paths):
             continue   # item da intenção presente: a mecânica citada não ganha prioridade (só BM25/vetor)
         pref = [i for i in ids if rx and re.search(rx, ix.chunks[i].head)]
-        intro = [i for i in ids if ix.chunks[i].head == "" or i == ids[0]]
+        intro = [] if intent == "contagem" else [i for i in ids if ix.chunks[i].head == "" or i == ids[0]]
         forced += pref + intro
     if forced:
         lists.append([(i, 1) for i in dict.fromkeys(forced)]); weights.append(2.0)

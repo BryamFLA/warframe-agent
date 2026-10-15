@@ -59,7 +59,11 @@ for q, p, rx in [("onde dropa criotico", "recursos/raridades/raro/cryotic.md", N
                  ("como desbloqueio o helminth", "mecanicas/helminth.md", None),
                  ("como funciona o sistema de rivens", "mecanicas/rivens.md", None),
                  ("onde farmar argon crystal", "recursos/raridades/raro/argon_crystal.md", None),
-                 ("o que fazer depois do second dream", "mecanicas/guia_de_progressao.md", None)]:
+                 ("o que fazer depois do second dream", "mecanicas/guia_de_progressao.md", None),
+                 ("quantos warframes tem no jogo?", "warframes/_Warframes _Indice.md", r"Contagem"),
+                 ("quantas armas primárias existem", "armas/primarias/_Armas _Primarias _Indice.md", r"Contagem"),
+                 ("quantos mods tem no jogo", "mods/_Mods _Indice.md", r"Contagem"),
+                 ("quantas jornadas tem o warframe", "missoes/jornadas/_Jornadas _Indice.md", r"Contagem")]:
     cases.append(("perguntas livres", q, p, rx))
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -8,7 +8,7 @@ historia jogo game lore todos todas tudo farm farmar onde como conseguir fazer r
 companheiro sindicato local planeta boss chefe dicas passo""".split())
 
 # palavras comuns do português que nunca devem virar nome do jogo na comparação fonética
-COMUNS = set("""quanto quanta quantos custa custo faco faz fazer feito posso pode podem quero queria preciso tenho tem temos
+COMUNS = set("""quanto quanta quantos quantas custa custo faco faz fazer feito posso pode podem quero queria preciso tenho tem temos
 melhor melhores consigo conseguir pegar pego pegam acho achar onde quando como porque qual quais quem esse essa isso este esta
 isto aquele aquela dele dela deles mais menos muito muita pouco pouca tudo todos todas nada algum alguma outro outra outros
 ainda agora depois antes sempre nunca jogo jogar jogando jogador missao missoes item itens arma armas build ajuda ajudar
@@ -78,7 +78,7 @@ class EntityIndex:
                     if any(used[i:i + n]):
                         continue
                     ws = w[i:i + n]; k = " ".join(ws)
-                    if len(k) < 5 or any(x in GENERIC or x in STOP or len(x) < 3 for x in ws):
+                    if len(k) < 5 or any(x in GENERIC or x in STOP or x in COMUNS or len(x) < 3 for x in ws):
                         continue
                     m = difflib.get_close_matches(k, self.keys, n=1, cutoff=0.88)
                     if m:
