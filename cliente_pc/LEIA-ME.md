@@ -29,12 +29,14 @@ Segure **F9**, fale a pergunta, solte. O PC transcreve sua voz, pergunta ao agen
 | `stt_modelo` | `large-v3-turbo` (padrão), `small` (mais leve, pior) |
 | `stt_device` | `auto` (GPU se der, senão CPU), `cuda` ou `cpu` |
 | `stt_beam` | 5 (mais preciso) ou 1 (mais rápido) |
-| `tts` | `edge` (natural, online) ou `kokoro` (offline, robótico) |
+| `tts` | `edge` (padrão, grátis), `elevenlabs` (mais natural, pago/limitado) ou `kokoro` (offline, robótico) |
+| `elevenlabs_key` / `elevenlabs_voz` / `elevenlabs_modelo` | Chave da API, *voice ID* da voz escolhida em elevenlabs.io e modelo (`eleven_flash_v2_5`, mais rápido e barato) |
+| `pausa_frase` | Silêncio entre frases da resposta, em segundos (padrão 0,3) |
 | `voz_edge` / `velocidade_edge` | `pt-BR-AntonioNeural` (masc.), `pt-BR-FranciscaNeural` (fem.); velocidade `+0%`, `+10%`... |
 | `efeito` | `ordis` (voz de Cephalon: metálica, rádio, gaguejo digital — efeito próprio, não é clone) ou `nenhum` |
-| `ordis_metal` / `ordis_glitch` | Intensidade do metálico (0–1, padrão 0,35) e chance de gaguejo por frase (0–1, padrão 0,3) |
+| `ordis_metal` / `ordis_glitch` | Intensidade do metálico (0–1, padrão 0,35) e chance de gaguejo nas frases de espera (0–1, padrão 0,5; a resposta nunca gagueja) |
 | `tom_edge` | Tom da voz Edge, ex.: `-5Hz`, `+0Hz`, `+5Hz` |
-| `som_espera` / `volume_disco` | Enquanto o Mac pensa: frase curta + som de HD girando (`false` desliga; volume 0–1) |
+| `frase_espera` | Fala uma frase curta ("Claro, Operador...") enquanto o Mac pensa (`false` desliga) |
 | `frases_espera` | Lista de frases de espera (uma é sorteada a cada pergunta) |
 | `voz` / `velocidade_voz` | Voz do Kokoro (reserva): `pm_alex`, `pm_santa`, `pf_dora` |
 | `salvar_gravacao` | Salva sua última fala em `ultima_gravacao.wav` (para conferir o microfone) |

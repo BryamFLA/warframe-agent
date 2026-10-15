@@ -11,10 +11,11 @@ import numpy as np
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CFG = {"api_url": "http://192.168.0.10:8765", "api_key": "", "tecla_falar": "f9", "tecla_janela": "f10",
        "stt_modelo": "large-v3-turbo", "stt_device": "auto", "stt_beam": 5,
-       "tts": "edge", "voz_edge": "pt-BR-AntonioNeural", "velocidade_edge": "+10%",
-       "tom_edge": "+0Hz", "efeito": "ordis", "ordis_metal": 0.35, "ordis_glitch": 0.3,
+       "tts": "edge", "voz_edge": "pt-BR-AntonioNeural", "velocidade_edge": "+0%", "pausa_frase": 0.3,
+       "elevenlabs_key": "", "elevenlabs_voz": "", "elevenlabs_modelo": "eleven_flash_v2_5",
+       "tom_edge": "+0Hz", "efeito": "ordis", "ordis_metal": 0.35, "ordis_glitch": 0.5,
        "voz": "pm_alex", "velocidade_voz": 1.1, "salvar_gravacao": True,
-       "som_espera": True, "volume_disco": 0.35,
+       "frase_espera": True,
        "frases_espera": ["Claro, Operador. Deixe-me buscar nos arquivos.", "Um momento, Operador. Consultando os bancos de dados.",
                          "Acessando os registros do Cephalon.", "Processando. Ordis está verificando os arquivos.",
                          "Entendido, Operador. Buscando nos meus arquivos."],
@@ -86,41 +87,6 @@ class Microfone:
         return np.concatenate(self.buf)[:, 0] if self.buf else np.zeros(0, dtype=np.float32)
 
 # ---------------------------------------------------------------- falar (TTS)
-def som_disco(sr, dur=8.0, rng=np.random.RandomState(7)):
-    """Gera um loop de HD trabalhando: zumbido do motor (7200 rpm = 120 Hz), chiado leve e rajadas de cliques da agulha."""
-    import scipy.signal as ss
-    n = int(sr * dur); t = np.arange(n) / sr
-    y = 0.05 * np.sin(2 * np.pi * 120 * t) + 0.025 * np.sin(2 * np.pi * 240 * t) + 0.012 * np.sin(2 * np.pi * 360 * t)
-    y += 0.006 * np.sin(2 * np.pi * 4200 * t) * (1 + 0.3 * np.sin(2 * np.pi * 0.7 * t))
-    y += ss.lfilter(*ss.butter(2, 400 / (sr / 2)), 0.02 * rng.randn(n))
-    b, a = ss.butter(2, [900 / (sr / 2), 4500 / (sr / 2)], btype="band")
-    tc = 0.15
-    while tc < dur - 0.3:
-        for _ in range(rng.randint(2, 7)):                      # rajada de cliques
-            i = int(tc * sr); L = int(sr * rng.uniform(0.003, 0.008))
-            clk = ss.lfilter(b, a, rng.randn(L)) * np.exp(-np.linspace(0, 6, L)) * rng.uniform(0.25, 0.6)
-            y[i:i + L] += clk[:max(0, min(L, n - i))]
-            tc += rng.uniform(0.02, 0.07)
-        tc += rng.uniform(0.15, 0.6)
-    f = int(sr * 0.2); y[:f] = y[:f] * np.linspace(0, 1, f) + y[-f:] * np.linspace(1, 0, f); y = y[:-f]   # loop sem emenda
-    return (y / np.abs(y).max() * 0.5).astype(np.float32)
-
-class Disco:
-    """Toca o som de HD em loop num stream próprio enquanto o agente pensa (some quando a resposta começa)."""
-    def __init__(self, sd, sr=24000):
-        self.buf, self.pos, self.g, self.ativo, self.ate = som_disco(sr), 0, 0.0, False, 0
-        self.vol = float(CFG.get("volume_disco", 0.35))
-        self.stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32", callback=self._cb)
-        self.stream.start()
-    def _cb(self, out, frames, tinfo, status):
-        if self.ativo and time.time() > self.ate:   # segurança: nunca fica girando para sempre
-            self.ativo = False
-        alvo = self.vol if self.ativo else 0.0
-        g = np.linspace(self.g, alvo, frames, dtype=np.float32) if abs(alvo - self.g) > 1e-4 else np.full(frames, alvo, np.float32)
-        self.g = alvo
-        idx = (self.pos + np.arange(frames)) % len(self.buf); self.pos = int(idx[-1] + 1)
-        out[:, 0] = self.buf[idx] * g
-
 class Voz:
     def __init__(self):
         import sounddevice as sd
@@ -128,12 +94,6 @@ class Voz:
         self.kokoro, self.motor = None, CFG["tts"]
         if self.motor != "edge":
             self._carregar_kokoro()
-        self.disco = None
-        if CFG.get("som_espera"):
-            try:
-                self.disco = Disco(sd)
-            except Exception as e:
-                print("[voz] sem som de espera:", e)
         self.frases_prontas = []
         threading.Thread(target=self._preparar_frases, daemon=True).start()
         threading.Thread(target=self._sintetizador, daemon=True).start()
@@ -142,21 +102,18 @@ class Voz:
         """Sintetiza as frases de espera uma vez (ficam em memória: tocam na hora, sem esperar o Edge)."""
         for f in CFG.get("frases_espera") or []:
             try:
-                self.frases_prontas.append(self.sintetizar(f))
+                self.frases_prontas.append(self.sintetizar(f, glitch=True))
             except Exception as e:
                 print("[voz] frase de espera falhou:", e); break
     def aguardar(self):
-        """Chamado logo depois da transcrição: frase curta + som de HD até a resposta começar a tocar."""
+        """Chamado logo depois da transcrição: uma frase curta de espera enquanto o Mac pensa."""
         import random
         self.parar_flag.clear()
-        if self.frases_prontas:
+        if CFG.get("frase_espera", True) and self.frases_prontas:
             audio, sr = random.choice(self.frases_prontas)
             self.tocar_fila.put((audio, sr, "espera"))
-        if self.disco:
-            self.disco.ate = time.time() + 40; self.disco.ativo = True
     def fim_espera(self):
-        if self.disco:
-            self.disco.ativo = False
+        pass
     def _carregar_kokoro(self):
         if self.kokoro is None:
             from kokoro_onnx import Kokoro
@@ -175,9 +132,22 @@ class Voz:
         mp3 = asyncio.run(go())
         audio, sr = sf.read(io.BytesIO(mp3), dtype="float32")
         return audio, sr
-    def sintetizar(self, texto):
+    def _elevenlabs(self, texto):
+        import requests
+        r = requests.post(f"https://api.elevenlabs.io/v1/text-to-speech/{CFG['elevenlabs_voz']}",
+                          params={"output_format": "pcm_24000"}, timeout=30,
+                          headers={"xi-api-key": CFG["elevenlabs_key"]},
+                          json={"text": texto, "model_id": CFG["elevenlabs_modelo"], "language_code": "pt"})
+        r.raise_for_status()
+        return np.frombuffer(r.content, dtype="<i2").astype(np.float32) / 32768, 24000
+    def sintetizar(self, texto, glitch=False):
         audio, sr = None, None
-        if self.motor == "edge":
+        if self.motor == "elevenlabs":
+            try:
+                audio, sr = self._elevenlabs(texto)
+            except Exception as e:
+                print("[voz] ElevenLabs falhou, usando Edge:", str(e)[:160])
+        if audio is None and self.motor in ("edge", "elevenlabs"):
             try:
                 audio, sr = self._edge(texto)
             except Exception as e:
@@ -187,7 +157,7 @@ class Voz:
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
         if CFG.get("efeito") == "ordis":
-            audio = efeito_ordis(np.asarray(audio, dtype=np.float32), sr)
+            audio = efeito_ordis(np.asarray(audio, dtype=np.float32), sr, glitch=glitch)
         return audio, sr
     def falar(self, frase):
         frase = limpar_para_fala(frase)
@@ -216,15 +186,12 @@ class Voz:
             if tipo == "resposta":
                 self.fim_espera()
             if not self.parar_flag.is_set():
-                if self.disco and self.disco.ativo:      # abaixa o HD enquanto a frase de espera fala
-                    v = self.disco.vol; self.disco.vol = v * 0.3
-                    self.sd.play(audio, sr); self.sd.wait(); self.disco.vol = v
-                else:
-                    self.sd.play(audio, sr); self.sd.wait()
+                pausa = np.zeros(int(sr * float(CFG.get("pausa_frase", 0.3))), dtype=np.float32)   # respiro entre frases
+                self.sd.play(np.concatenate([audio, pausa]), sr); self.sd.wait()
 
-def efeito_ordis(x, sr, rng=np.random):
+def efeito_ordis(x, sr, glitch=False, rng=np.random):
     """Voz de Cephalon "estilo Ordis" (efeito próprio, não é clone): timbre metálico, ressonância de nave,
-    faixa de rádio e um gaguejo digital ocasional no começo da frase ("O-O-Operador")."""
+    faixa de rádio; o gaguejo digital ("O-O-Operador") só nas frases de espera, nunca na resposta."""
     import scipy.signal as ss
     if len(x) < sr // 5:
         return x
@@ -243,16 +210,13 @@ def efeito_ordis(x, sr, rng=np.random):
     b, a = ss.butter(2, [180 / (sr / 2), min(6500 / (sr / 2), 0.99)], btype="band")
     y = ss.lfilter(b, a, y)
     # 4) glitch: repete o começo da frase 1-2 vezes, às vezes um "soluço" no meio
-    if rng.rand() < float(CFG.get("ordis_glitch", 0.3)):
+    if glitch and rng.rand() < float(CFG.get("ordis_glitch", 0.5)):
         ini = int(np.argmax(np.abs(y) > 0.05 * np.abs(y).max()))
         seg = y[ini:ini + int(sr * rng.uniform(0.07, 0.12))].copy()
         if len(seg) > 10:
             seg *= np.hanning(len(seg)) ** 0.3
             gap = np.zeros(int(sr * 0.025), dtype=y.dtype)
             y = np.concatenate([y[:ini]] + [seg, gap] * rng.randint(1, 3) + [y[ini:]])
-    if rng.rand() < float(CFG.get("ordis_glitch", 0.3)) / 2 and len(y) > sr:
-        i = rng.randint(sr // 2, len(y) - sr // 4); n = int(sr * 0.05)
-        y = np.concatenate([y[:i], y[i:i + n], y[i:i + n], y[i:]])
     return (0.9 * y / (np.abs(y).max() + 1e-9)).astype(np.float32)
 
 def limpar_para_fala(t):
@@ -403,7 +367,7 @@ def autoteste(tocar):
     a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)
     t = time.time(); txt = o.transcrever(a16); print(f"[stt] '{txt}' em {time.time() - t:.1f}s")
     if CFG["api_key"] and tocar:
-        print("[espera] frase + som de HD enquanto pergunta ao Mac...", flush=True)
+        print("[espera] frase de espera + resposta falada...", flush=True)
         while len(v.frases_prontas) < 1:
             time.sleep(0.2)
         v.aguardar(); fr = Frases(v.falar)

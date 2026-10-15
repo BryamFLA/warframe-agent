@@ -69,7 +69,7 @@ class EntityIndex:
                     continue
                 k = " ".join(w[i:i + n])
                 if k in self.alias:
-                    found.append((i, k, self._rank(self.alias[k], k)))
+                    found.append((i, k, self._rank(self.alias[k], k), n))
                     for j in range(i, i + n):
                         used[j] = True
         if fuzzy:   # erros de digitação: n-gramas de 1-3 palavras ainda livres
@@ -82,7 +82,7 @@ class EntityIndex:
                         continue
                     m = difflib.get_close_matches(k, self.keys, n=1, cutoff=0.88)
                     if m:
-                        found.append((i, m[0], self._rank(self.alias[m[0]], m[0])))
+                        found.append((i, m[0], self._rank(self.alias[m[0]], m[0]), n))
                         for j in range(i, i + n):
                             used[j] = True
         if fonetico:   # transcrição de voz: compara pela pronúncia aproximada
@@ -97,18 +97,34 @@ class EntityIndex:
                                                   cutoff=0.8 if len(ws[0]) >= 5 else 0.88)
                     if m:
                         k = self.fon[m[0]]
-                        found.append((i, k, self._rank(self.alias[k], k)))
+                        found.append((i, k, self._rank(self.alias[k], k), n))
                         for j in range(i, i + n):
                             used[j] = True
         found.sort()
         # "excal prime" / "rhino prime": promove para a versão Prime quando existir
         out = []
-        for i, k, ps in found:
-            nxt = w[i + len(k.split())] if i + len(k.split()) < len(w) else ""
+        for i, k, ps, n in found:
+            nxt = w[i + n] if i + n < len(w) else ""
             if nxt == "prime" and "prime" not in k:
                 tp = " ".join(words(self.title_of.get(ps[0], ""))) + " prime"
                 if tp in self.alias:
-                    k, ps = tp, self._rank(self.alias[tp], tp)
-            out.append((i, k, ps))
+                    k, ps, n = tp, self._rank(self.alias[tp], tp), n + 1
+            out.append((i, k, ps, n))
         found = out
-        return [{"termo": k, "caminhos": ps[:4], "titulo": self.title_of.get(ps[0], k)} for _, k, ps in found]
+        return [{"termo": k, "caminhos": ps[:4], "titulo": self.title_of.get(ps[0], k), "falado": " ".join(w[i:i + n])}
+                for i, k, ps, n in found]
+
+
+def corrigir_nomes(q, ents):
+    """Troca na pergunta os nomes reconhecidos por aproximação ("ruino" -> Rhino, "setus" -> Cetus) pelo nome oficial."""
+    toks = list(re.finditer(r"\w+", q))
+    norm = [" ".join(words(t.group())) for t in toks]
+    for e in ents:
+        alvo = e.get("falado", "").split()
+        if not alvo or e["termo"] == e["falado"]:    # nome dito certo (inclui apelidos PT como "caminho de aço")
+            continue
+        for i in range(len(norm) - len(alvo) + 1):
+            if norm[i:i + len(alvo)] == alvo:
+                a, b = toks[i].start(), toks[i + len(alvo) - 1].end()
+                return corrigir_nomes(q[:a] + e["titulo"].split(" / ")[0] + q[b:], [x for x in ents if x is not e])
+    return q

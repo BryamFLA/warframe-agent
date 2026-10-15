@@ -2,6 +2,7 @@
 import time, json, re
 from . import config, llm
 from .index import Index
+from .entities import corrigir_nomes
 from .entities import EntityIndex
 from .router import route as do_route
 from .retrieve import retrieve
@@ -18,7 +19,10 @@ Use SOMENTE as informações do CONTEXTO (trechos do second brain do jogo). Regr
 
 VOZ = """
 MODO VOZ: a resposta será FALADA em voz alta durante o jogo.
-- No máximo 3 frases curtas (até ~60 palavras), com o essencial primeiro.
+- No máximo 3 a 4 frases curtas (até ~60 palavras no total), com o essencial primeiro.
+- Escreva para ser ouvido, num ritmo calmo: frases de no máximo 15 palavras, terminadas em ponto final.
+- Use vírgulas para criar pausas naturais: depois de expressões de abertura ("Para isso,", "Primeiro,", "Depois disso,"),
+  entre itens de uma enumeração e antes de explicações ("o Rhino, que é um tanque,").
 - Sem markdown, sem listas, sem emojis, sem citações [n], sem tabelas.
 - Escreva números por extenso quando curtos ("dois Orokin Cell"), porcentagens como "38 por cento"."""
 
@@ -98,7 +102,10 @@ class Agent:
             user += "(A lista completa de itens será anexada automaticamente depois da sua resposta: faça só um resumo organizado do que dá para conseguir e fazer lá, com os destaques.)\n\n"
         if inventario:
             user += "INVENTÁRIO DO JOGADOR:\n" + json.dumps(inventario, ensure_ascii=False)[:6000] + "\n\n"
-        user += f"PERGUNTA: {q}"
+        if s["entidades"]:   # pergunta transcrita de voz/digitada com erro ("ruino", "setus"): diz ao modelo o nome certo
+            user += ("NOMES DO JOGO RECONHECIDOS NA PERGUNTA (podem estar escritos errado na pergunta; use estes): "
+                     + ", ".join(dict.fromkeys(e["titulo"] for e in s["entidades"])) + "\n\n")
+        user += f"PERGUNTA: {corrigir_nomes(q, s['entidades'])}"
         msgs = [{"role": "system", "content": SYSTEM + (VOZ if modo == "voz" else "")}] + (history or [])[-6:] + [{"role": "user", "content": user}]
         t = time.time()
         if on_token:
