@@ -19,5 +19,14 @@
   "janela_segundos": 25,
   "janela_alpha": 0.88,
   "sessao": "pc-jogo",
-  "salvar_gravacao": true
+  "salvar_gravacao": true,
+  "som_espera": true,
+  "volume_disco": 0.35,
+  "frases_espera": [
+    "Claro, Operador. Deixe-me buscar nos arquivos.",
+    "Um momento, Operador. Consultando os bancos de dados.",
+    "Acessando os registros do Cephalon.",
+    "Processando. Ordis está verificando os arquivos.",
+    "Entendido, Operador. Buscando nos meus arquivos."
+  ]
 }

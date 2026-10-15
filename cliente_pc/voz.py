@@ -14,6 +14,10 @@ CFG = {"api_url": "http://192.168.0.10:8765", "api_key": "", "tecla_falar": "f9"
        "tts": "edge", "voz_edge": "pt-BR-AntonioNeural", "velocidade_edge": "+10%",
        "tom_edge": "+0Hz", "efeito": "ordis", "ordis_metal": 0.35, "ordis_glitch": 0.3,
        "voz": "pm_alex", "velocidade_voz": 1.1, "salvar_gravacao": True,
+       "som_espera": True, "volume_disco": 0.35,
+       "frases_espera": ["Claro, Operador. Deixe-me buscar nos arquivos.", "Um momento, Operador. Consultando os bancos de dados.",
+                         "Acessando os registros do Cephalon.", "Processando. Ordis está verificando os arquivos.",
+                         "Entendido, Operador. Buscando nos meus arquivos."],
        "modo": "voz", "janela_segundos": 25, "janela_alpha": 0.88, "sessao": "pc-jogo"}
 if os.path.exists(os.path.join(AQUI, "config.json")):
     CFG.update(json.load(open(os.path.join(AQUI, "config.json"), encoding="utf-8")))
@@ -82,6 +86,41 @@ class Microfone:
         return np.concatenate(self.buf)[:, 0] if self.buf else np.zeros(0, dtype=np.float32)
 
 # ---------------------------------------------------------------- falar (TTS)
+def som_disco(sr, dur=8.0, rng=np.random.RandomState(7)):
+    """Gera um loop de HD trabalhando: zumbido do motor (7200 rpm = 120 Hz), chiado leve e rajadas de cliques da agulha."""
+    import scipy.signal as ss
+    n = int(sr * dur); t = np.arange(n) / sr
+    y = 0.05 * np.sin(2 * np.pi * 120 * t) + 0.025 * np.sin(2 * np.pi * 240 * t) + 0.012 * np.sin(2 * np.pi * 360 * t)
+    y += 0.006 * np.sin(2 * np.pi * 4200 * t) * (1 + 0.3 * np.sin(2 * np.pi * 0.7 * t))
+    y += ss.lfilter(*ss.butter(2, 400 / (sr / 2)), 0.02 * rng.randn(n))
+    b, a = ss.butter(2, [900 / (sr / 2), 4500 / (sr / 2)], btype="band")
+    tc = 0.15
+    while tc < dur - 0.3:
+        for _ in range(rng.randint(2, 7)):                      # rajada de cliques
+            i = int(tc * sr); L = int(sr * rng.uniform(0.003, 0.008))
+            clk = ss.lfilter(b, a, rng.randn(L)) * np.exp(-np.linspace(0, 6, L)) * rng.uniform(0.25, 0.6)
+            y[i:i + L] += clk[:max(0, min(L, n - i))]
+            tc += rng.uniform(0.02, 0.07)
+        tc += rng.uniform(0.15, 0.6)
+    f = int(sr * 0.2); y[:f] = y[:f] * np.linspace(0, 1, f) + y[-f:] * np.linspace(1, 0, f); y = y[:-f]   # loop sem emenda
+    return (y / np.abs(y).max() * 0.5).astype(np.float32)
+
+class Disco:
+    """Toca o som de HD em loop num stream próprio enquanto o agente pensa (some quando a resposta começa)."""
+    def __init__(self, sd, sr=24000):
+        self.buf, self.pos, self.g, self.ativo, self.ate = som_disco(sr), 0, 0.0, False, 0
+        self.vol = float(CFG.get("volume_disco", 0.35))
+        self.stream = sd.OutputStream(samplerate=sr, channels=1, dtype="float32", callback=self._cb)
+        self.stream.start()
+    def _cb(self, out, frames, tinfo, status):
+        if self.ativo and time.time() > self.ate:   # segurança: nunca fica girando para sempre
+            self.ativo = False
+        alvo = self.vol if self.ativo else 0.0
+        g = np.linspace(self.g, alvo, frames, dtype=np.float32) if abs(alvo - self.g) > 1e-4 else np.full(frames, alvo, np.float32)
+        self.g = alvo
+        idx = (self.pos + np.arange(frames)) % len(self.buf); self.pos = int(idx[-1] + 1)
+        out[:, 0] = self.buf[idx] * g
+
 class Voz:
     def __init__(self):
         import sounddevice as sd
@@ -89,8 +128,35 @@ class Voz:
         self.kokoro, self.motor = None, CFG["tts"]
         if self.motor != "edge":
             self._carregar_kokoro()
+        self.disco = None
+        if CFG.get("som_espera"):
+            try:
+                self.disco = Disco(sd)
+            except Exception as e:
+                print("[voz] sem som de espera:", e)
+        self.frases_prontas = []
+        threading.Thread(target=self._preparar_frases, daemon=True).start()
         threading.Thread(target=self._sintetizador, daemon=True).start()
         threading.Thread(target=self._tocador, daemon=True).start()
+    def _preparar_frases(self):
+        """Sintetiza as frases de espera uma vez (ficam em memória: tocam na hora, sem esperar o Edge)."""
+        for f in CFG.get("frases_espera") or []:
+            try:
+                self.frases_prontas.append(self.sintetizar(f))
+            except Exception as e:
+                print("[voz] frase de espera falhou:", e); break
+    def aguardar(self):
+        """Chamado logo depois da transcrição: frase curta + som de HD até a resposta começar a tocar."""
+        import random
+        self.parar_flag.clear()
+        if self.frases_prontas:
+            audio, sr = random.choice(self.frases_prontas)
+            self.tocar_fila.put((audio, sr, "espera"))
+        if self.disco:
+            self.disco.ate = time.time() + 40; self.disco.ativo = True
+    def fim_espera(self):
+        if self.disco:
+            self.disco.ativo = False
     def _carregar_kokoro(self):
         if self.kokoro is None:
             from kokoro_onnx import Kokoro
@@ -132,6 +198,7 @@ class Voz:
         for q in (self.fila, self.tocar_fila):
             while not q.empty():
                 q.get_nowait()
+        self.fim_espera()
         self.sd.stop()
     def _sintetizador(self):
         while True:
@@ -140,14 +207,20 @@ class Voz:
             try:
                 audio, sr = self.sintetizar(frase)
                 if not self.parar_flag.is_set():
-                    self.tocar_fila.put((audio, sr))
+                    self.tocar_fila.put((audio, sr, "resposta"))
             except Exception as e:
                 print("[voz] erro:", e)
     def _tocador(self):
         while True:
-            audio, sr = self.tocar_fila.get()
+            audio, sr, tipo = self.tocar_fila.get()
+            if tipo == "resposta":
+                self.fim_espera()
             if not self.parar_flag.is_set():
-                self.sd.play(audio, sr); self.sd.wait()
+                if self.disco and self.disco.ativo:      # abaixa o HD enquanto a frase de espera fala
+                    v = self.disco.vol; self.disco.vol = v * 0.3
+                    self.sd.play(audio, sr); self.sd.wait(); self.disco.vol = v
+                else:
+                    self.sd.play(audio, sr); self.sd.wait()
 
 def efeito_ordis(x, sr, rng=np.random):
     """Voz de Cephalon "estilo Ordis" (efeito próprio, não é clone): timbre metálico, ressonância de nave,
@@ -293,6 +366,7 @@ class App:
             if not q:
                 self.jan.post("status", "Não entendi, tente de novo"); return
             self.jan.post("nova", q); self.jan.post("status", f"🧠 Pensando... (transcrição {time.time() - t0:.1f}s)")
+            self.voz.aguardar()
             fr = Frases(self.voz.falar); t1 = time.time(); prim = []
             def tok(t):
                 if not prim:
@@ -303,7 +377,7 @@ class App:
                 self.jan.post("lista", "Lista completa:\n" + fim["lista_completa"])
             self.jan.post("status", f"✅ {time.time() - t0:.1f}s · segure {CFG['tecla_falar'].upper()} para outra pergunta")
         except Exception as e:
-            self.jan.post("status", f"⚠️ Erro: {e}")
+            self.jan.post("status", f"⚠️ Erro: {e}"); self.voz.fim_espera()
         finally:
             self.ocupado = False
     def rodar(self):
@@ -328,6 +402,15 @@ def autoteste(tocar):
     import scipy.signal as ss
     a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)
     t = time.time(); txt = o.transcrever(a16); print(f"[stt] '{txt}' em {time.time() - t:.1f}s")
+    if CFG["api_key"] and tocar:
+        print("[espera] frase + som de HD enquanto pergunta ao Mac...", flush=True)
+        while len(v.frases_prontas) < 1:
+            time.sleep(0.2)
+        v.aguardar(); fr = Frases(v.falar)
+        fim = perguntar_stream("o que eu posso fazer em cetus?", fr.add); fr.fechar()
+        while v.fila.qsize() or v.tocar_fila.qsize():
+            time.sleep(0.3)
+        time.sleep(4)
     if CFG["api_key"]:
         t = time.time(); prim = []
         fim = perguntar_stream("onde consigo o rhino?", lambda x: prim.append(time.time() - t) if not prim else None)

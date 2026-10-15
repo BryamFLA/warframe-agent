@@ -34,6 +34,8 @@ Segure **F9**, fale a pergunta, solte. O PC transcreve sua voz, pergunta ao agen
 | `efeito` | `ordis` (voz de Cephalon: metálica, rádio, gaguejo digital — efeito próprio, não é clone) ou `nenhum` |
 | `ordis_metal` / `ordis_glitch` | Intensidade do metálico (0–1, padrão 0,35) e chance de gaguejo por frase (0–1, padrão 0,3) |
 | `tom_edge` | Tom da voz Edge, ex.: `-5Hz`, `+0Hz`, `+5Hz` |
+| `som_espera` / `volume_disco` | Enquanto o Mac pensa: frase curta + som de HD girando (`false` desliga; volume 0–1) |
+| `frases_espera` | Lista de frases de espera (uma é sorteada a cada pergunta) |
 | `voz` / `velocidade_voz` | Voz do Kokoro (reserva): `pm_alex`, `pm_santa`, `pf_dora` |
 | `salvar_gravacao` | Salva sua última fala em `ultima_gravacao.wav` (para conferir o microfone) |
 | `modo` | `voz` (resposta curta, falada) ou `texto` (resposta completa) |
