@@ -138,7 +138,8 @@ class Voz:
                           params={"output_format": "pcm_24000"}, timeout=30,
                           headers={"xi-api-key": CFG["elevenlabs_key"]},
                           json={"text": texto, "model_id": CFG["elevenlabs_modelo"], "language_code": "pt"})
-        r.raise_for_status()
+        if not r.ok:   # mostra o motivo que a ElevenLabs devolve (ex.: voz só para planos pagos, créditos esgotados)
+            raise RuntimeError(f"{r.status_code}: {r.text[:300]}")
         return np.frombuffer(r.content, dtype="<i2").astype(np.float32) / 32768, 24000
     def sintetizar(self, texto, glitch=False):
         audio, sr = None, None
