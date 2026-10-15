@@ -104,8 +104,10 @@ AJUDA = ("Olá, Operador. Sou o assistente de Warframe.\n\n"
 class Bot:
     def __init__(self):
         self.cfg = carregar_cfg()
-        if not self.cfg.get("token") or not self.cfg["admins"]:
+        if not self.cfg.get("token"):
             sys.exit("Bot não configurado. Rode: .venv/bin/python telegram_bot.py --configurar")
+        if not self.cfg["admins"]:
+            log("Sem administrador: a primeira pessoa que mandar mensagem vira administradora.")
         self.tg, self.ag = TG(self.cfg["token"]), Agente()
         self.fila, self.sessao_n, self.avisados = queue.Queue(), {}, set()
         self.ouvido = None
@@ -243,6 +245,11 @@ class Bot:
         texto = (msg.get("text") or "").strip()
         if texto.startswith("/id"):
             return self.comando(msg, texto)
+        if not self.cfg["admins"]:          # 1ª mensagem depois de configurar só com o token: vira administrador
+            self.cfg["admins"] = [uid]; salvar_cfg(self.cfg)
+            log(f"Administrador definido: {msg['from'].get('first_name', '')} (ID {uid})")
+            self.tg.enviar(chat, "✅ Você é o administrador deste bot.\n\n" + AJUDA, html_ok=False)
+            return
         if not self.liberado(uid):
             return self.pedir_acesso(msg)
         if texto.startswith("/"):
