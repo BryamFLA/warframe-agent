@@ -14,6 +14,7 @@ Use SOMENTE as informações do CONTEXTO (trechos do second brain do jogo). Regr
 - Seja organizado (passos numerados para "como fazer", listas para "liste").
 - Mantenha nomes do jogo em inglês (Excalibur, Orokin Cell, Steel Path...).
 - Cite as fontes no texto como [n] (números dos trechos). Não escreva uma lista "Fontes" no fim: ela é anexada automaticamente.
+- Se pedirem algo específico (ex.: build para Steel Path) e o contexto só tiver a versão geral, responda com a geral e avise que é a geral.
 - Se o contexto não tiver a resposta, diga que não encontrou no guia e sugira o que o jogador pode procurar. Não invente números, chances ou nomes.
 - Quando pedirem "todos os itens", liste todos os itens que estão no contexto, agrupados por tipo.
 - Se houver INVENTÁRIO DO JOGADOR, adapte a resposta ao que ele já tem ou não tem."""

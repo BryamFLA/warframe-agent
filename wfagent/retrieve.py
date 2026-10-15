@@ -50,6 +50,8 @@ def retrieve(ix, q, route, ents, top_k=None, use_vectors=True):
     def pick(ps):  # entidade ambígua (ex.: Kullervo warframe x chefe): escolhe a pasta que combina com a intenção
         return next((p for p in ps if p.startswith(pref_dirs)), ps[0]) if pref_dirs else ps[0]
     ent_paths = [pick(e["caminhos"]) for e in ents]
+    if pref_dirs:   # "build da Saryn no Steel Path": o item (pasta da intenção) vem antes da mecânica citada
+        ent_paths.sort(key=lambda p: not p.startswith(pref_dirs))
     if route.get("local"):
         ent_paths.insert(0, route["local"])
     ent_paths += [p for p in DEFAULT_NOTES.get(intent, []) if not ents]
@@ -58,6 +60,8 @@ def retrieve(ix, q, route, ents, top_k=None, use_vectors=True):
         ids = ix.by_path.get(p, [])
         if not ids:
             continue
+        if pref_dirs and not p.startswith(pref_dirs) and any(x.startswith(pref_dirs) for x in ent_paths):
+            continue   # item da intenção presente: a mecânica citada não ganha prioridade (só BM25/vetor)
         pref = [i for i in ids if rx and re.search(rx, ix.chunks[i].head)]
         intro = [i for i in ids if ix.chunks[i].head == "" or i == ids[0]]
         forced += pref + intro
