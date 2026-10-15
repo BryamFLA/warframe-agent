@@ -61,3 +61,7 @@ ollama pull gemma4:12b qwen3-embedding:0.6b
 
 Gargalo: leitura do contexto (~200 tokens/s) e geração (~18 tokens/s). O chat mostra a resposta em streaming.
 Primeira pergunta após ligar o Mac leva ~2–3 min (carregar o modelo; depois fica 30 min na memória).
+
+## Telegram
+
+Bot direto no Mac (sem n8n, sem porta aberta): veja [docs/telegram.md](docs/telegram.md). O guia antigo com n8n continua em [docs/n8n_telegram.md](docs/n8n_telegram.md).

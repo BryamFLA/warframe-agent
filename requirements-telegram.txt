@@ -1,0 +1,6 @@
+# Extras do bot do Telegram (instale no mesmo .venv: .venv/bin/pip install -r requirements-telegram.txt)
+requests
+faster-whisper>=1.1
+edge-tts
+soundfile>=0.12
+scipy
