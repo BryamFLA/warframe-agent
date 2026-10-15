@@ -12,6 +12,7 @@ AQUI = os.path.dirname(os.path.abspath(__file__))
 CFG = {"api_url": "http://192.168.0.10:8765", "api_key": "", "tecla_falar": "f9", "tecla_janela": "f10",
        "stt_modelo": "large-v3-turbo", "stt_device": "auto", "stt_beam": 5,
        "tts": "edge", "voz_edge": "pt-BR-AntonioNeural", "velocidade_edge": "+10%",
+       "tom_edge": "+0Hz", "efeito": "ordis", "ordis_metal": 0.35, "ordis_glitch": 0.3,
        "voz": "pm_alex", "velocidade_voz": 1.1, "salvar_gravacao": True,
        "modo": "voz", "janela_segundos": 25, "janela_alpha": 0.88, "sessao": "pc-jogo"}
 if os.path.exists(os.path.join(AQUI, "config.json")):
@@ -100,7 +101,8 @@ class Voz:
         import asyncio, io, edge_tts, soundfile as sf
         async def go():
             buf = bytearray()
-            async for ch in edge_tts.Communicate(texto, CFG["voz_edge"], rate=CFG["velocidade_edge"]).stream():
+            async for ch in edge_tts.Communicate(texto, CFG["voz_edge"], rate=CFG["velocidade_edge"],
+                                                 pitch=CFG["tom_edge"]).stream():
                 if ch["type"] == "audio":
                     buf.extend(ch["data"])
             return bytes(buf)
@@ -108,12 +110,19 @@ class Voz:
         audio, sr = sf.read(io.BytesIO(mp3), dtype="float32")
         return audio, sr
     def sintetizar(self, texto):
+        audio, sr = None, None
         if self.motor == "edge":
             try:
-                return self._edge(texto)
+                audio, sr = self._edge(texto)
             except Exception as e:
                 print("[voz] Edge TTS falhou (sem internet?), usando Kokoro:", str(e)[:120])
-        return self._carregar_kokoro().create(texto, voice=CFG["voz"], speed=CFG["velocidade_voz"], lang="pt-br")
+        if audio is None:
+            audio, sr = self._carregar_kokoro().create(texto, voice=CFG["voz"], speed=CFG["velocidade_voz"], lang="pt-br")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        if CFG.get("efeito") == "ordis":
+            audio = efeito_ordis(np.asarray(audio, dtype=np.float32), sr)
+        return audio, sr
     def falar(self, frase):
         frase = limpar_para_fala(frase)
         if frase:
@@ -139,6 +148,39 @@ class Voz:
             audio, sr = self.tocar_fila.get()
             if not self.parar_flag.is_set():
                 self.sd.play(audio, sr); self.sd.wait()
+
+def efeito_ordis(x, sr, rng=np.random):
+    """Voz de Cephalon "estilo Ordis" (efeito próprio, não é clone): timbre metálico, ressonância de nave,
+    faixa de rádio e um gaguejo digital ocasional no começo da frase ("O-O-Operador")."""
+    import scipy.signal as ss
+    if len(x) < sr // 5:
+        return x
+    t = np.arange(len(x)) / sr
+    m = float(CFG.get("ordis_metal", 0.35))
+    # 1) metálico: ring modulation leve com duas portadoras
+    ring = x * (0.6 * np.sin(2 * np.pi * 72 * t) + 0.4 * np.sin(2 * np.pi * 143 * t))
+    y = (1 - m) * x + m * ring
+    # 2) ressonância "de nave": comb com realimentação (~5 ms) + flanger lento
+    d = int(sr * 0.005)
+    y = ss.lfilter([1.0], np.r_[1.0, np.zeros(d - 1), -0.35], y)
+    lfo = (0.002 + 0.0015 * np.sin(2 * np.pi * 0.4 * t)) * sr
+    idx = np.clip(np.arange(len(y)) - lfo, 0, len(y) - 1)
+    y = 0.75 * y + 0.25 * np.interp(idx, np.arange(len(y)), y)
+    # 3) faixa de comunicador: 180 Hz – 6,5 kHz
+    b, a = ss.butter(2, [180 / (sr / 2), min(6500 / (sr / 2), 0.99)], btype="band")
+    y = ss.lfilter(b, a, y)
+    # 4) glitch: repete o começo da frase 1-2 vezes, às vezes um "soluço" no meio
+    if rng.rand() < float(CFG.get("ordis_glitch", 0.3)):
+        ini = int(np.argmax(np.abs(y) > 0.05 * np.abs(y).max()))
+        seg = y[ini:ini + int(sr * rng.uniform(0.07, 0.12))].copy()
+        if len(seg) > 10:
+            seg *= np.hanning(len(seg)) ** 0.3
+            gap = np.zeros(int(sr * 0.025), dtype=y.dtype)
+            y = np.concatenate([y[:ini]] + [seg, gap] * rng.randint(1, 3) + [y[ini:]])
+    if rng.rand() < float(CFG.get("ordis_glitch", 0.3)) / 2 and len(y) > sr:
+        i = rng.randint(sr // 2, len(y) - sr // 4); n = int(sr * 0.05)
+        y = np.concatenate([y[:i], y[i:i + n], y[i:i + n], y[i:]])
+    return (0.9 * y / (np.abs(y).max() + 1e-9)).astype(np.float32)
 
 def limpar_para_fala(t):
     t = re.sub(r"\[\d+(,\s*\d+)*\]", "", t)            # [1], [1, 3]
@@ -276,7 +318,7 @@ class App:
 def autoteste(tocar):
     import soundfile as sf
     t = time.time(); v = Voz(); print(f"[voz] motor {CFG['tts']} carregado em {time.time() - t:.1f}s")
-    frase = "Para conseguir o Rhino, derrote o Jackal em Fossa, Vênus."
+    frase = "Operador! Para conseguir o Rhino, derrote o Jackal em Fossa, Vênus."
     t = time.time(); audio, sr = v.sintetizar(frase); print(f"[voz] sintetizou {len(audio)/sr:.1f}s de áudio em {time.time() - t:.1f}s")
     sf.write(os.path.join(AQUI, "teste_voz.wav"), audio, sr)
     if tocar:

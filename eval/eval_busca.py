@@ -8,7 +8,7 @@ from wfagent.agent import Agent
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--embed"); ap.add_argument("--sem-vetor", action="store_true")
-ap.add_argument("--router", default="auto"); ap.add_argument("--k", type=int, default=5)
+ap.add_argument("--router", default="off"); ap.add_argument("--k", type=int, default=5)
 ap.add_argument("--amostra", type=int, default=120)
 a = ap.parse_args()
 router = {"off": False, "auto": "auto", "on": True}[a.router]

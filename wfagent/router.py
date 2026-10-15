@@ -5,7 +5,7 @@ from . import config, llm
 from .index import norm_text
 
 INTENTS = ["onde_conseguir", "como_construir", "build", "historia", "jornada", "listar_itens_local",
-           "o_que_fazer", "mecanica", "comparar", "outro"]
+           "o_que_fazer", "atividades_local", "mecanica", "comparar", "outro"]
 HUBS = {"cetus": "locais/open-worlds/cetus.md", "plains": "locais/open-worlds/cetus.md", "eidolon": "locais/open-worlds/cetus.md",
         "fortuna": "locais/open-worlds/fortuna.md", "vallis": "locais/open-worlds/fortuna.md",
         "deimos": "locais/open-worlds/deimos.md", "necralisk": "locais/open-worlds/deimos.md", "cambion": "locais/open-worlds/deimos.md",
@@ -20,14 +20,21 @@ RULES = [  # (intenção, regex sobre a pergunta normalizada sem acento)
     ("como_construir", r"\b(passo a passo|como (criar|construir|craftar|fabricar|montar|fazer) )|\bforja\b|\bfoundry\b"),
     ("onde_conseguir", r"\b(onde|como) (eu )?((posso|poderia|devo|da pra|consigo) )?(consigo|conseguir|acho|achar|encontro|encontrar|farmo|farmar|dropa|obter|obtenho|pego|pegar|compro|comprar)\b|\bonde (dropa|cai|farma)\b|\bdrop(a|s)?\b"),
     ("mecanica", r"\bo que (e|sao|significa|faz)\b|\bcomo funciona|\bpra que serve|\bpara que serve|\bcomo (libero|liberar|desbloqueio|desbloquear|subir|evoluir|aumento|aumentar|ganhar|ganho)\b"),
-    ("o_que_fazer", r"\bo que (eu )?(faco|fazer|devo fazer)\b|\bproximo passo\b|\bpor onde comecar\b|\b(diari|semana)"),
+    ("o_que_fazer", r"\bo que (eu )?((posso|devo|consigo|da pra|tem pra|tem para|vale) )?(faco|fazer)\b|\bproximo passo\b|\bpor onde comecar\b|\b(diari|semana)"),
     ("comparar", r"\b(melhor|pior) (que|entre)\b|\bvs\.?\b|\bcomparar\b|\bou o\b.*\?"),
 ]
 
-def rule_route(q):
+HUB_PATHS = set(HUBS.values())
+
+def rule_route(q, ents=()):
     n = norm_text(q)
     intent = next((i for i, rx in RULES if re.search(rx, n)), "outro")
     hub = next((p for k, p in HUBS.items() if re.search(rf"\b{k}\b", n)), None)
+    if not hub:   # nome do lugar mal transcrito/digitado ("setus") mas reconhecido como entidade
+        hub = next((p for e in ents for p in e["caminhos"] if p in HUB_PATHS), None)
+    if hub and intent in ("o_que_fazer", "outro", "mecanica") and re.search(
+            r"\b(fazer|faco|atividades?|tem (em|no|na|pra fazer)|vale a pena)\b", n) and not re.search(r"\b(farmar|conseguir|adquirir|itens)\b", n):
+        intent = "atividades_local"
     if intent == "listar_itens_local" and not hub:
         intent = "outro"
     if hub and intent in ("outro", "o_que_fazer") and re.search(r"\b(farmar|conseguir|adquirir|itens)\b", n):
@@ -45,7 +52,7 @@ Responda só JSON. Campos:
 - intencao: uma de {intents}
   (onde_conseguir=como obter/farmar um item; como_construir=passo a passo de forja; build=mods/setup;
    historia=lore/enredo; jornada=quest: o que faz, como completar, dicas; listar_itens_local=listar itens de um lugar;
-   o_que_fazer=próximo passo/rotina do jogador; mecanica=como funciona um sistema; comparar=comparação; outro)
+   o_que_fazer=próximo passo/rotina do jogador; atividades_local=o que dá para fazer num lugar (Cetus, Fortuna...); mecanica=como funciona um sistema; comparar=comparação; outro)
 - consulta_busca: reescreva a pergunta como consulta curta de busca, com os nomes oficiais do jogo em inglês
   (ex.: "criótico" -> "Cryotic"; "jornada" -> "quest") e palavras-chave das seções (Onde Conseguir, Build, História, Passo a Passo, Dicas, Itens).
 - termos_jogo: nomes próprios do jogo citados (itens, warframes, armas, lugares, quests, facções), na grafia oficial.
@@ -67,7 +74,7 @@ def llm_route(q, ents):
         return {"intencao": "outro", "consulta_busca": q, "termos_jogo": []}
 
 def route(q, ents, use_llm="auto"):
-    r = rule_route(q)
+    r = rule_route(q, ents)
     r.update({"consulta_busca": q, "termos_jogo": [], "via": "regras"})
     need = use_llm is True or (use_llm == "auto" and (r["intencao"] == "outro" or not ents))
     if need:

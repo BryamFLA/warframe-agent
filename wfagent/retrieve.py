@@ -10,6 +10,7 @@ SECTION = {  # intenção -> regex do heading da seção preferida
     "jornada": r"Passo a Passo|Dicas|Narrativa|Hist[oó]ria|Pr[eé]-requisitos|Recompensas|Etapas",
     "listar_itens_local": r"📦|O Que Farmar|Recursos|O Que Fazer",
     "o_que_fazer": r"Recomenda|Regras|Fase|Checklist|Prioridade|Rotina",
+    "atividades_local": r"O Que (D[aá] para )?Fazer|Conte[uú]do Especial|Miss[oõ]es|Como Chegar|O Que Farmar|Ficha|Recompensas|Vendedores",
     "mecanica": r"Como Funciona|Mec[aâ]nica|Resumo|Dicas|Desbloque|Requisit|Como Acessar|Como Come[cç]ar|Pr[eé]-requisito|Como Usar",
 }
 DEFAULT_NOTES = {

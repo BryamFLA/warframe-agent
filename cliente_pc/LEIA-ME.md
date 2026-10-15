@@ -31,6 +31,9 @@ Segure **F9**, fale a pergunta, solte. O PC transcreve sua voz, pergunta ao agen
 | `stt_beam` | 5 (mais preciso) ou 1 (mais rápido) |
 | `tts` | `edge` (natural, online) ou `kokoro` (offline, robótico) |
 | `voz_edge` / `velocidade_edge` | `pt-BR-AntonioNeural` (masc.), `pt-BR-FranciscaNeural` (fem.); velocidade `+0%`, `+10%`... |
+| `efeito` | `ordis` (voz de Cephalon: metálica, rádio, gaguejo digital — efeito próprio, não é clone) ou `nenhum` |
+| `ordis_metal` / `ordis_glitch` | Intensidade do metálico (0–1, padrão 0,35) e chance de gaguejo por frase (0–1, padrão 0,3) |
+| `tom_edge` | Tom da voz Edge, ex.: `-5Hz`, `+0Hz`, `+5Hz` |
 | `voz` / `velocidade_voz` | Voz do Kokoro (reserva): `pm_alex`, `pm_santa`, `pf_dora` |
 | `salvar_gravacao` | Salva sua última fala em `ultima_gravacao.wav` (para conferir o microfone) |
 | `modo` | `voz` (resposta curta, falada) ou `texto` (resposta completa) |

@@ -20,7 +20,8 @@ dinheiro platina creditos recurso recursos material materiais peca pecas parte p
 
 def fonetica(s):
     """Chave fonética simples para nomes transcritos de voz (Rhino~Raino~Ruino, Jackal~Jakao)."""
-    s = s.replace("ph", "f").replace("ck", "k").replace("qu", "k").replace("q", "k").replace("c", "k")
+    s = s.replace("ph", "f").replace("ck", "k").replace("qu", "k").replace("q", "k")
+    s = re.sub(r"c(?=[ei])", "s", s).replace("c", "k")   # "ce/ci" soa "se/si" (Cetus~Setus)
     s = s.replace("w", "u").replace("y", "i").replace("h", "").replace("z", "s")
     s = re.sub(r"(.)\1+", r"\1", s)          # letras repetidas
     s = re.sub(r"(ao|al|au)$", "al", s)       # final "-al" falado como "-ao/-au"
