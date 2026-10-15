@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Assistente de voz do Warframe para o PC de jogo (Windows).
-Segure a tecla (padrão F9), fale, solte -> transcreve (faster-whisper, CPU) -> pergunta ao agente no Mac
--> fala a resposta frase a frase (Kokoro, voz pm_alex, CPU) e mostra o texto numa janela por cima do jogo.
+Segure a tecla (padrão F9), fale, solte -> transcreve (faster-whisper large-v3-turbo na GPU) -> pergunta ao agente no Mac
+-> fala a resposta frase a frase (Edge TTS, voz neural pt-BR; Kokoro offline como reserva) e mostra o texto numa janela por cima do jogo.
 F10 mostra/esconde a janela.   Uso: python voz.py   |   python voz.py --teste   (autoteste sem microfone)"""
 import os, sys, json, time, queue, threading, re, argparse
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # aviso inofensivo no Windows
@@ -10,18 +10,43 @@ import numpy as np
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 CFG = {"api_url": "http://192.168.0.10:8765", "api_key": "", "tecla_falar": "f9", "tecla_janela": "f10",
-       "whisper_modelo": "small", "whisper_device": "cpu", "voz": "pm_alex", "velocidade_voz": 1.1,
+       "stt_modelo": "large-v3-turbo", "stt_device": "auto", "stt_beam": 5,
+       "tts": "edge", "voz_edge": "pt-BR-AntonioNeural", "velocidade_edge": "+10%",
+       "voz": "pm_alex", "velocidade_voz": 1.1, "salvar_gravacao": True,
        "modo": "voz", "janela_segundos": 25, "janela_alpha": 0.88, "sessao": "pc-jogo"}
 if os.path.exists(os.path.join(AQUI, "config.json")):
     CFG.update(json.load(open(os.path.join(AQUI, "config.json"), encoding="utf-8")))
 SR_MIC = 16000
 
 # ---------------------------------------------------------------- ouvir (STT)
+def _dlls_cuda():
+    """No Windows, as DLLs do CUDA (cuBLAS/cuDNN) vêm dos pacotes pip nvidia-*; registra as pastas delas."""
+    if os.name != "nt":
+        return
+    import site, glob
+    for sp in site.getsitepackages():
+        for d in glob.glob(os.path.join(sp, "nvidia", "*", "bin")):
+            os.add_dll_directory(d); os.environ["PATH"] = d + os.pathsep + os.environ["PATH"]
+
 class Ouvido:
     def __init__(self):
         from faster_whisper import WhisperModel
-        ct = "int8" if CFG["whisper_device"] == "cpu" else "float16"
-        self.m = WhisperModel(CFG["whisper_modelo"], device=CFG["whisper_device"], compute_type=ct)
+        dev = CFG["stt_device"]
+        if dev in ("auto", "cuda"):
+            try:
+                _dlls_cuda()
+                self.m = WhisperModel(CFG["stt_modelo"], device="cuda", compute_type="int8_float16")
+                self.m.transcribe(np.zeros(SR_MIC, dtype=np.float32), language="pt")  # força carregar cuDNN agora
+                self.dev = "cuda"
+            except Exception as e:
+                if dev == "cuda":
+                    raise
+                print("[stt] GPU indisponível, usando CPU (mais lento):", str(e)[:160])
+                dev = "cpu"
+        if dev == "cpu":
+            self.m = WhisperModel(CFG["stt_modelo"], device="cpu", compute_type="int8")
+            self.dev = "cpu"
+        print(f"[stt] {CFG['stt_modelo']} em {self.dev}", flush=True)
         self.prompt = ("Warframe, Tenno, Excalibur, Rhino, Orokin Cell, Argon Crystal, Cryotic, Cetus, Fortuna, Deimos, "
                        "Steel Path, Helminth, Riven, Arcane, Forma, Prime, Relíquia, Void, Lotus, Ordis, Kuva Lich, build")
     def carregar_vocabulario(self):
@@ -32,7 +57,12 @@ class Ouvido:
         except Exception as e:
             print("[stt] usando vocabulário padrão:", e)
     def transcrever(self, audio):
-        segs, _ = self.m.transcribe(audio, language="pt", beam_size=1, vad_filter=True,
+        if CFG.get("salvar_gravacao"):
+            try:
+                import soundfile as sf; sf.write(os.path.join(AQUI, "ultima_gravacao.wav"), audio, SR_MIC)
+            except Exception:
+                pass
+        segs, _ = self.m.transcribe(audio, language="pt", beam_size=CFG["stt_beam"], vad_filter=True,
                                     initial_prompt=self.prompt, condition_on_previous_text=False)
         return " ".join(s.text.strip() for s in segs).strip()
 
@@ -53,34 +83,62 @@ class Microfone:
 # ---------------------------------------------------------------- falar (TTS)
 class Voz:
     def __init__(self):
-        from kokoro_onnx import Kokoro
-        mdir = os.path.join(AQUI, "modelos")
-        self.k = Kokoro(os.path.join(mdir, "kokoro-v1.0.int8.onnx"), os.path.join(mdir, "voices-v1.0.bin"))
         import sounddevice as sd
-        self.sd, self.fila, self.parar_flag = sd, queue.Queue(), threading.Event()
+        self.sd, self.fila, self.tocar_fila, self.parar_flag = sd, queue.Queue(), queue.Queue(maxsize=3), threading.Event()
+        self.kokoro, self.motor = None, CFG["tts"]
+        if self.motor != "edge":
+            self._carregar_kokoro()
+        threading.Thread(target=self._sintetizador, daemon=True).start()
         threading.Thread(target=self._tocador, daemon=True).start()
-    def sintetizar(self, texto):
-        audio, sr = self.k.create(texto, voice=CFG["voz"], speed=CFG["velocidade_voz"], lang="pt-br")
+    def _carregar_kokoro(self):
+        if self.kokoro is None:
+            from kokoro_onnx import Kokoro
+            mdir = os.path.join(AQUI, "modelos")
+            self.kokoro = Kokoro(os.path.join(mdir, "kokoro-v1.0.int8.onnx"), os.path.join(mdir, "voices-v1.0.bin"))
+        return self.kokoro
+    def _edge(self, texto):
+        import asyncio, io, edge_tts, soundfile as sf
+        async def go():
+            buf = bytearray()
+            async for ch in edge_tts.Communicate(texto, CFG["voz_edge"], rate=CFG["velocidade_edge"]).stream():
+                if ch["type"] == "audio":
+                    buf.extend(ch["data"])
+            return bytes(buf)
+        mp3 = asyncio.run(go())
+        audio, sr = sf.read(io.BytesIO(mp3), dtype="float32")
         return audio, sr
+    def sintetizar(self, texto):
+        if self.motor == "edge":
+            try:
+                return self._edge(texto)
+            except Exception as e:
+                print("[voz] Edge TTS falhou (sem internet?), usando Kokoro:", str(e)[:120])
+        return self._carregar_kokoro().create(texto, voice=CFG["voz"], speed=CFG["velocidade_voz"], lang="pt-br")
     def falar(self, frase):
         frase = limpar_para_fala(frase)
         if frase:
             self.fila.put(frase)
     def calar(self):
         self.parar_flag.set()
-        while not self.fila.empty():
-            self.fila.get_nowait()
+        for q in (self.fila, self.tocar_fila):
+            while not q.empty():
+                q.get_nowait()
         self.sd.stop()
-    def _tocador(self):
+    def _sintetizador(self):
         while True:
             frase = self.fila.get()
             self.parar_flag.clear()
             try:
                 audio, sr = self.sintetizar(frase)
                 if not self.parar_flag.is_set():
-                    self.sd.play(audio, sr); self.sd.wait()
+                    self.tocar_fila.put((audio, sr))
             except Exception as e:
                 print("[voz] erro:", e)
+    def _tocador(self):
+        while True:
+            audio, sr = self.tocar_fila.get()
+            if not self.parar_flag.is_set():
+                self.sd.play(audio, sr); self.sd.wait()
 
 def limpar_para_fala(t):
     t = re.sub(r"\[\d+(,\s*\d+)*\]", "", t)            # [1], [1, 3]
@@ -217,13 +275,13 @@ class App:
 # ---------------------------------------------------------------- autoteste (sem microfone/teclado)
 def autoteste(tocar):
     import soundfile as sf
-    t = time.time(); v = Voz(); print(f"[voz] carregada em {time.time() - t:.1f}s")
+    t = time.time(); v = Voz(); print(f"[voz] motor {CFG['tts']} carregado em {time.time() - t:.1f}s")
     frase = "Para conseguir o Rhino, derrote o Jackal em Fossa, Vênus."
     t = time.time(); audio, sr = v.sintetizar(frase); print(f"[voz] sintetizou {len(audio)/sr:.1f}s de áudio em {time.time() - t:.1f}s")
     sf.write(os.path.join(AQUI, "teste_voz.wav"), audio, sr)
     if tocar:
         v.sd.play(audio, sr); v.sd.wait()
-    print("[stt] carregando Whisper (1ª vez baixa ~480 MB, pode levar alguns minutos)...", flush=True)
+    print("[stt] carregando Whisper (1ª vez baixa ~1,6 GB, pode levar alguns minutos)...", flush=True)
     t = time.time(); o = Ouvido(); o.carregar_vocabulario(); print(f"[stt] carregado em {time.time() - t:.1f}s")
     import scipy.signal as ss
     a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)

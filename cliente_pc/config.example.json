@@ -3,12 +3,17 @@
   "api_key": "COLE-AQUI-A-CHAVE (arquivo cache/api_key.txt no Mac)",
   "tecla_falar": "f9",
   "tecla_janela": "f10",
-  "whisper_modelo": "small",
-  "whisper_device": "cpu",
+  "stt_modelo": "large-v3-turbo",
+  "stt_device": "auto",
+  "stt_beam": 5,
+  "tts": "edge",
+  "voz_edge": "pt-BR-AntonioNeural",
+  "velocidade_edge": "+10%",
   "voz": "pm_alex",
   "velocidade_voz": 1.1,
   "modo": "voz",
   "janela_segundos": 25,
   "janela_alpha": 0.88,
-  "sessao": "pc-jogo"
+  "sessao": "pc-jogo",
+  "salvar_gravacao": true
 }
