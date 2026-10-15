@@ -4,6 +4,8 @@ Segure a tecla (padrão F9), fale, solte -> transcreve (faster-whisper, CPU) -> 
 -> fala a resposta frase a frase (Kokoro, voz pm_alex, CPU) e mostra o texto numa janela por cima do jogo.
 F10 mostra/esconde a janela.   Uso: python voz.py   |   python voz.py --teste   (autoteste sem microfone)"""
 import os, sys, json, time, queue, threading, re, argparse
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")  # aviso inofensivo no Windows
+import warnings; warnings.filterwarnings("ignore", module="huggingface_hub")
 import numpy as np
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -221,6 +223,7 @@ def autoteste(tocar):
     sf.write(os.path.join(AQUI, "teste_voz.wav"), audio, sr)
     if tocar:
         v.sd.play(audio, sr); v.sd.wait()
+    print("[stt] carregando Whisper (1ª vez baixa ~480 MB, pode levar alguns minutos)...", flush=True)
     t = time.time(); o = Ouvido(); o.carregar_vocabulario(); print(f"[stt] carregado em {time.time() - t:.1f}s")
     import scipy.signal as ss
     a16 = ss.resample_poly(audio, SR_MIC, sr).astype(np.float32)
