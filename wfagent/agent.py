@@ -1,7 +1,7 @@
 """Agente de perguntas e respostas do Warframe sobre o vault (RAG local com Ollama)."""
 import time, json, re
 from . import config, llm
-from .index import Index
+from .index import Index, norm_text
 from .entities import corrigir_nomes
 from .entities import EntityIndex
 from .router import route as do_route
@@ -26,6 +26,9 @@ MODO VOZ: a resposta será FALADA em voz alta durante o jogo.
 - Sem markdown, sem listas, sem emojis, sem citações [n], sem tabelas.
 - Escreva números por extenso quando curtos ("dois Orokin Cell"), porcentagens como "38 por cento"."""
 
+SEGUIMENTO = re.compile(r"\b(dele|dela|deles|delas|nele|nela|ele|ela|isso|nisso|disso|esse|essa|esses|essas|este|esta|"
+                        r"aquele|aquela|mesmo|mesma|la|lá)\b|^e\b|^(e )?(qual|quais|onde|como|quanto)\b.{0,25}$")
+
 class Agent:
     def __init__(self, embed_model=None, answer_model=None, router_model=None, use_llm_router=None, use_vectors=True):
         if router_model: config.MODEL_ROUTER = router_model
@@ -36,10 +39,24 @@ class Agent:
             use_llm_router = {"off": False, "auto": "auto", "on": True}[config.ROUTER_LLM]
         self.use_llm_router, self.use_vectors = use_llm_router, use_vectors
 
-    def search(self, q, fonetico=False):
+    def search(self, q, fonetico=False, anteriores=()):
         t = time.time()
         ents = self.ents.find(q, fonetico=fonetico)
+        herdadas = []
+        if not ents and anteriores and SEGUIMENTO.search(norm_text(q)):
+            # pergunta de continuação ("e a build dele?"): herda o item/lugar da pergunta anterior
+            for prev in anteriores[:2]:
+                herdadas = self.ents.find(prev, fonetico=fonetico)
+                if herdadas and re.search(r"\bprime\b", norm_text(q)):   # "e o prime dele?" -> versão Prime
+                    herdadas = [(self.ents.find(e["titulo"] + " Prime", fuzzy=False) or [e])[0]
+                                if "Prime" not in e["titulo"] else e for e in herdadas]
+                if herdadas:
+                    ents = herdadas
+                    break
         r = do_route(q, ents, self.use_llm_router)
+        if herdadas:
+            r["consulta_busca"] = q + " " + " ".join(e["titulo"] for e in herdadas)
+            r["herdou"] = [e["titulo"] for e in herdadas]
         for term in r.get("termos_jogo", []):
             for e in self.ents.find(term, fuzzy=False):
                 if e["caminhos"][0] not in [x["caminhos"][0] for x in ents]:
@@ -92,7 +109,8 @@ class Agent:
 
     def ask(self, q, inventario=None, history=None, on_token=None, modo="texto"):
         M = config.MODES.get(modo, config.MODES["texto"])
-        s = self.search(q, fonetico=(modo == "voz"))
+        s = self.search(q, fonetico=(modo == "voz"),
+                        anteriores=[m["content"] for m in reversed(history or []) if m.get("role") == "user"])
         big = s["rota"]["intencao"] == "listar_itens_local"
         hits = s["hits"]
         list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []
