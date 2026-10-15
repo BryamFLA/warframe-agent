@@ -383,7 +383,23 @@ def autoteste(tocar):
     else:
         print("[api] sem api_key no config.json: pulei o teste da API")
 
+def listar_vozes_elevenlabs():
+    """Lista as vozes padrão (premade) da conta: são as únicas que o plano grátis pode usar pela API."""
+    import requests
+    r = requests.get("https://api.elevenlabs.io/v1/voices", headers={"xi-api-key": CFG["elevenlabs_key"]}, timeout=20)
+    if not r.ok:
+        print(f"Erro {r.status_code}: {r.text[:300]}\n(a chave precisa da permissão 'Voices: Read')"); return
+    vs = r.json().get("voices", [])
+    for grupo in ("premade", None):
+        print("\n== Vozes padrão (funcionam no plano grátis) ==" if grupo else "\n== Outras vozes da conta (biblioteca/clones: exigem plano pago na API) ==")
+        for v in vs:
+            if (v.get("category") == "premade") == bool(grupo):
+                lb = v.get("labels") or {}
+                print(f"  {v['voice_id']}  {v['name']:<12} {lb.get('gender', ''):<7} {lb.get('accent', '')} {lb.get('description', '')}")
+    print("\nCopie o ID para \"elevenlabs_voz\" no config.json.")
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(); ap.add_argument("--teste", action="store_true"); ap.add_argument("--tocar", action="store_true")
+    ap.add_argument("--vozes", action="store_true", help="lista as vozes da ElevenLabs")
     a = ap.parse_args()
-    autoteste(a.tocar) if a.teste else App().rodar()
+    listar_vozes_elevenlabs() if a.vozes else autoteste(a.tocar) if a.teste else App().rodar()
