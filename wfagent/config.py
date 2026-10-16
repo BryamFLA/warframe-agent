@@ -21,3 +21,5 @@ MODES = {
     "texto": {"budget": 9000, "per_chunk": 2500, "num_predict": 700},
     "voz":   {"budget": 2800, "per_chunk": 1000, "num_predict": 160},
 }
+# Modo profundo (perguntas complexas: plano em etapas + validação): "auto" classifica cada pergunta; "simples" desliga
+PROFUNDIDADE = os.environ.get("WF_PROFUNDIDADE", "auto")

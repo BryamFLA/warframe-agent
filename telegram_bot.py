@@ -83,11 +83,25 @@ def sem_citacoes(t):
 class Agente:
     def __init__(self):
         self.key = open(os.path.join(CACHE, "api_key.txt")).read().strip()
-    def perguntar(self, pergunta, modo, sessao):
-        r = requests.post(f"{API}/ask", headers={"X-API-Key": self.key}, timeout=600,
-                          json={"pergunta": pergunta, "modo": modo, "sessao": sessao})
+    def perguntar(self, pergunta, modo, sessao, profundidade="auto", on_progresso=None):
+        """Usa /ask/stream para receber o progresso do modo profundo (perguntas complexas levam alguns minutos)."""
+        r = requests.post(f"{API}/ask/stream", headers={"X-API-Key": self.key}, timeout=(10, 1800), stream=True,
+                          json={"pergunta": pergunta, "modo": modo, "sessao": sessao, "profundidade": profundidade})
         r.raise_for_status()
-        return r.json()
+        for linha in r.iter_lines():
+            if not linha:
+                continue
+            ev = json.loads(linha)
+            if ev["tipo"] == "progresso" and on_progresso:
+                try:
+                    on_progresso(ev)
+                except Exception as e:
+                    log("progresso:", e)
+            elif ev["tipo"] == "fim":
+                return ev
+            elif ev["tipo"] == "erro":
+                raise RuntimeError(ev["erro"])
+        raise RuntimeError("a API encerrou sem resposta")
     def vocabulario(self):
         try:
             return requests.get(f"{API}/vocabulario", headers={"X-API-Key": self.key}, timeout=10).json()["vocabulario"]
@@ -99,6 +113,9 @@ AJUDA = ("Olá, Operador. Sou o assistente de Warframe.\n\n"
          "Pergunte por texto ou áudio, por exemplo:\n"
          "• onde consigo o Rhino?\n• qual a melhor build para a Saryn?\n"
          "• o que eu posso fazer em Cetus?\n• liste tudo que posso conseguir em Fortuna\n\n"
+         "Perguntas amplas (\"qual a história do jogo?\", \"guia do iniciante ao endgame\") ativam o modo profundo: "
+         "pesquiso em etapas, confiro cada parte e monto uma resposta longa (leva alguns minutos).\n"
+         "/profundo <pergunta> força o modo profundo · /rapido <pergunta> força a resposta direta\n\n"
          "/nova esquece a conversa · /audio liga/desliga resposta em áudio · /id mostra seu ID")
 
 class Bot:
@@ -189,9 +206,28 @@ class Bot:
                 self.tg.call("sendMessage", chat_id=chat, text=f"🎙️ {pergunta}", reply_to_message_id=msg["message_id"])
             else:
                 pergunta = msg["text"]
+            profundidade = "auto"
+            m = re.match(r"/(profundo|rapido|rápido)(@\w+)?\s+(.*)", pergunta, re.I | re.S)
+            if m:
+                profundidade = "profunda" if m.group(1).lower() == "profundo" else "simples"
+                pergunta = m.group(3).strip()
+            status = {"id": None, "linhas": []}
+            def progresso(ev):                     # modo profundo: uma mensagem de status editada a cada etapa
+                status["linhas"].append(ev["texto"])
+                txt = "\n".join(status["linhas"][-12:])
+                if status["id"] is None:
+                    status["id"] = self.tg.call("sendMessage", chat_id=chat, text=txt)["message_id"]
+                else:
+                    self.tg.call("editMessageText", chat_id=chat, message_id=status["id"], text=txt)
             falar = bool(audio_in) or chat in self.cfg["audio_sempre"]
             sessao = f"tg-{chat}-{self.sessao_n.get(chat, 0)}"
-            r = self.ag.perguntar(pergunta, "voz" if falar else "texto", sessao)
+            r = self.ag.perguntar(pergunta, "voz" if falar else "texto", sessao, profundidade, progresso)
+            if status["id"]:
+                try:
+                    self.tg.call("editMessageText", chat_id=chat, message_id=status["id"],
+                                 text="\n".join(status["linhas"][-12:]) + f"\n✅ Pronto em {time.time() - t0:.0f}s")
+                except Exception:
+                    pass
             resposta = sem_citacoes(r["resposta"]).strip()
             texto = resposta + (("\n\n**Lista completa**\n" + r["lista_completa"]) if r.get("lista_completa") else "")
             self.tg.enviar(chat, texto)
@@ -252,7 +288,9 @@ class Bot:
             return
         if not self.liberado(uid):
             return self.pedir_acesso(msg)
-        if texto.startswith("/"):
+        if re.match(r"/(profundo|rapido|rápido)(@\w+)?\s+\S", texto, re.I):
+            pass                                   # pergunta com modo forçado: vai para a fila
+        elif texto.startswith("/"):
             return self.comando(msg, texto)
         if not texto and not (msg.get("voice") or msg.get("audio")):
             return self.tg.enviar(chat, "Mande uma pergunta em texto ou áudio.", html_ok=False)

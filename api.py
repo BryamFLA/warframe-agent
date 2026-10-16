@@ -6,6 +6,8 @@ Auth:   header  X-API-Key: <chave>   (chave em cache/api_key.txt, criada no 1º 
 POST /ask          {"pergunta": "...", "modo": "texto"|"voz", "sessao": "id-opcional", "inventario": {...}}
                    -> {"resposta", "lista_completa", "fontes", ...}       (ideal para n8n / Telegram)
 POST /ask/stream   mesmo corpo -> NDJSON: {"tipo":"token","texto":"..."} ... {"tipo":"fim", ...resposta completa}
+                   (modo profundo também manda {"tipo":"progresso","texto":"🔎 Etapa 2/6: ..."} enquanto pesquisa)
+Campo opcional "profundidade": "auto" (padrão: classifica a pergunta) | "simples" | "profunda"
 GET  /health       (sem chave)
 """
 import os, json, secrets, threading, queue, time, collections
@@ -33,6 +35,7 @@ class Pergunta(BaseModel):
     modo: str = "texto"
     sessao: str | None = None
     inventario: dict | None = None
+    profundidade: str = "auto"      # auto | simples | profunda  (modo profundo: plano em etapas + validação)
 
 def check(key_header, key_query):
     if (key_header or key_query) != API_KEY:
@@ -54,7 +57,7 @@ def health():
 def ask(p: Pergunta, x_api_key: str | None = Header(None), key: str | None = Query(None)):
     check(x_api_key, key)
     with LOCK:
-        r = ag.ask(p.pergunta, inventario=p.inventario, history=_hist(p), modo=p.modo)
+        r = ag.ask(p.pergunta, inventario=p.inventario, history=_hist(p), modo=p.modo, profundidade=p.profundidade)
     _save(p, r)
     return r
 
@@ -66,7 +69,8 @@ def ask_stream(p: Pergunta, x_api_key: str | None = Header(None), key: str | Non
         try:
             with LOCK:
                 r = ag.ask(p.pergunta, inventario=p.inventario, history=_hist(p), modo=p.modo,
-                           on_token=lambda t: q.put({"tipo": "token", "texto": t}))
+                           on_token=lambda t: q.put({"tipo": "token", "texto": t}),
+                           profundidade=p.profundidade, on_event=q.put)
             _save(p, r)
             q.put({"tipo": "fim", **r})
         except Exception as e:

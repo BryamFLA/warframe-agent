@@ -43,14 +43,15 @@ class Agent:
         self.use_llm_router, self.use_vectors = use_llm_router, use_vectors
         self.reescrever = config.REESCREVER if reescrever is None else reescrever
 
-    def search(self, q, fonetico=False, anteriores=(), history=None):
+    def search(self, q, fonetico=False, anteriores=(), history=None, reescrever=None):
         t = time.time()
+        usar_reescrita = self.reescrever if reescrever is None else reescrever
         q_orig, qr = q, None
         ents0 = self.ents.find(q, fonetico=fonetico)
         exatas = [e for e in ents0 if e["termo"] == e.get("falado")]
         seguimento = bool(history) and bool(SEGUIMENTO.search(norm_text(q)))
         # reescreve só quando ajuda: continuação de conversa, nome aproximado (voz/erro) ou nenhum nome reconhecido
-        if self.reescrever and (seguimento or not exatas or len(exatas) < len(ents0)):
+        if usar_reescrita and (seguimento or not exatas or len(exatas) < len(ents0)):
             qr = reescrever(q, history if seguimento or not exatas else None,
                             [e["titulo"] for e in ents0], self.answer_model)
             if qr:
@@ -135,11 +136,18 @@ class Agent:
                 lines.append(f"- {name} — {how[:110]}{'…' if len(how) > 110 else ''}")
         return "\n".join(lines)
 
-    def ask(self, q, inventario=None, history=None, on_token=None, modo="texto"):
+    def ask(self, q, inventario=None, history=None, on_token=None, modo="texto", profundidade=None, on_event=None):
+        """profundidade: "auto" (classifica a pergunta), "simples" (fluxo direto) ou "profunda" (planeja e pesquisa em etapas).
+        on_event(dict) recebe o progresso do modo profundo ({"tipo": "progresso", "texto": ...})."""
         M = config.MODES.get(modo, config.MODES["texto"])
         s = self.search(q, fonetico=(modo == "voz"),
                         anteriores=[m["content"] for m in reversed(history or []) if m.get("role") == "user"],
                         history=history)
+        profundidade = profundidade or config.PROFUNDIDADE
+        if modo != "voz" and profundidade != "simples" and not inventario:
+            r = self.ask_profundo(q, s, profundidade, on_token, on_event)
+            if r:
+                return r
         big = s["rota"]["intencao"] == "listar_itens_local"
         hits = s["hits"]
         list_hits = [i for i in hits if "📦" in self.ix.chunks[i].head and "Resumo" not in self.ix.chunks[i].head] if big else []
@@ -175,3 +183,28 @@ class Agent:
                 "entidades": [e["titulo"] for e in s["entidades"]], "pergunta_busca": s["pergunta_busca"],
                 "tempo": {"busca": s["t_busca"], "reescrita": s["t_reescrita"], "resposta": round(time.time() - t, 1),
                           "tokens_entrada": raw.get("prompt_eval_count"), "tokens_saida": raw.get("eval_count")}}
+
+    def ask_profundo(self, q, s, profundidade="auto", on_token=None, on_event=None):
+        """Classifica a pergunta e, se for complexa, responde pelo modo profundo. Retorna None para seguir o fluxo simples."""
+        from .profundo import Pensador
+        t = time.time()
+        pz = Pensador(self)
+        if profundidade == "profunda":
+            tipo, motivo, via = "complexa", "pedido explícito", "parametro"
+        else:
+            tipo, motivo, via = pz.classificar(q, s)
+        s["rota"]["profundidade"] = {"tipo": tipo, "motivo": motivo, "via": via, "t": round(time.time() - t, 1)}
+        if tipo != "complexa":
+            return None
+        r = pz.responder(corrigir_nomes(s["pergunta_busca"] or q, s["entidades"]), s, on_event=on_event)
+        if not r:
+            s["rota"]["profundidade"]["falhou"] = "plano"
+            return None
+        if on_token:
+            on_token(r["resposta"])
+        fontes = [{"n": n, "nota": self.ix.chunks[i].path, "secao": self.ix.chunks[i].head} for n, i in enumerate(r["chunks"], 1)]
+        s["rota"]["plano"] = [e["titulo"] for e in r["plano"]["etapas"]]
+        return {"resposta": r["resposta"], "lista_completa": "", "fontes": fontes, "rota": s["rota"],
+                "entidades": [e["titulo"] for e in s["entidades"]], "pergunta_busca": s["pergunta_busca"],
+                "profundo": {"plano": r["plano"], "lacunas": r["lacunas"], "verificacoes": r["verificacoes"], "passos": r["passos"]},
+                "tempo": {"busca": s["t_busca"], "reescrita": s["t_reescrita"], "resposta": r["t_total"]}}

@@ -12,6 +12,25 @@ pergunta ─► 1. entidades (títulos/aliases do vault, tolera erro de digitaç
           ─► 4. LLM de resposta com as fontes numeradas  [+ inventário do jogador, opcional]
 ```
 
+### Modo profundo (perguntas complexas) — `wfagent/profundo.py`
+
+Perguntas amplas ("qual a história do jogo?", "história completa dos Grineer", "guia do iniciante ao endgame") não cabem
+numa busca só. O mesmo `gemma4:12b` é usado como "cérebro" em várias tarefas pequenas:
+
+```
+1ª busca ─► classificar (regras; gemma só nos casos ambíguos)  ── simples ─► fluxo normal acima
+                                                               └ complexa ─► plano (3–7 etapas, cada uma com consulta + nota do vault)
+  para cada etapa: busca própria + nota indicada ─► rascunho ─► VERIFICADOR (erros graves / pontos faltando)
+                   └ reprovou: busca extra e/ou reescrita com o apontamento
+  editor: a resposta inteira cobre a pergunta? lacuna ─► nova etapa  ─►  introdução + etapas + conclusão
+```
+
+- ~10–12 min por resposta longa no M4 (cada chamada lê ~3 mil tokens a ~130 tok/s). Modo voz nunca usa.
+- API: campo `"profundidade": "auto" | "simples" | "profunda"`; `/ask/stream` manda `{"tipo":"progresso",...}` a cada etapa.
+- Telegram: progresso numa mensagem editada; `/profundo <pergunta>` força, `/rapido <pergunta>` desliga.
+- `WF_PROFUNDIDADE=simples` desliga de vez; `WF_MAX_REVISOES` (padrão 1) = rodadas de verificação por etapa.
+- Testes: `eval/teste_profundo.py` (respostas em Markdown + plano/verificações), `eval/teste_verificador.py` (erros plantados).
+
 | Papel | Modelo padrão | Variável |
 |---|---|---|
 | Resposta | `gemma4:12b` | `WF_MODEL_ANSWER` |
